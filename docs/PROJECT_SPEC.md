@@ -75,6 +75,13 @@
 | Prisma | ORM | **prisma 7.2.0** + **@prisma/client 7.2.0** | 管业务表与迁移；向量表推荐 SQL 迁移 |
 | Postgres | 数据库 | Supabase 托管 Postgres（版本由 Supabase 提供） | 作为 pgvector 基础 |
 | pgvector | 向量扩展 | Supabase Extension（建议 **≥ 0.6**） | 0.6+ HNSW 构建更快；索引最大支持 2000 维向量 |
+| Tailwind CSS | 样式框架 | **3.4.1** | 原子化 CSS，与 Next.js 14 完美集成；快速构建响应式 UI |
+| shadcn/ui | 基础组件库 | **0.8.0** | 基于 Radix UI + Tailwind，提供可复用的无样式组件 |
+| ant-design X | AI 对话组件库 | **@2.1.1** | 专为 AI 应用优化，提供 Chat/Message/Bubble 等对话 UI 组件 |
+| shadcn/UI | 无样式组件库 |  | 能快速搭建美观、一致且可访问的界面 |
+| framer-motion | 动画库 | **10.16.4** | 平滑的 UI 过渡与加载动画 |
+| zustand | 状态管理 | **4.4.1** | 轻量级状态管理，用于 Notebook/Chat/Studio 状态 |
+| lucide-react | 图标库 | **0.292.0** | 现代化 SVG 图标库，与 Tailwind 无缝集成 |
 
 ### 3.2 为什么用 Next.js 14，而不是更新版本？
 
