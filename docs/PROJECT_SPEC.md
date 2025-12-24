@@ -318,7 +318,7 @@ LangChain.js 未必原生支持 Embedding-3，建议：
 ```sql
 create or replace function public.match_document_chunks(
   p_notebook_id uuid,
-  p_query_embedding vector(1536),
+  p_query_embedding vector(1024),
   p_match_count int default 8
 )
 returns table (
@@ -345,7 +345,711 @@ as $$
 $$;
 ```
 
-## 8. 交付物清单（一期）
+## 8. 关键架构风险与解决方案（必读）
+
+> **重要提示**：以下风险点必须在开发前明确解决方案，否则会在后期造成数据损坏、用户体验问题或技术债务。
+
+### 8.1 向量维度一致性风险 🔴 P0
+
+**风险描述**
+- Embedding-3 默认 2048 维，但 pgvector 索引限制 ≤ 2000 维
+- 如果代码中 `EMBEDDING_DIM` 与数据库 `vector(D)` 不一致，会导致写入失败或检索错误
+- 后期改维度会导致所有老数据失效
+
+**强制约束（必须执行）**
+
+1. **环境变量锁定**
+```bash
+# .env
+EMBEDDING_DIM=1024  # 必须与数据库 schema 一致
+```
+
+2. **代码启动时断言检查**
+```typescript
+// lib/config.ts
+const EMBEDDING_DIM = parseInt(process.env.EMBEDDING_DIM || '1024');
+const EXPECTED_DIM = 1024; // 与 migration 中的维度一致
+
+if (EMBEDDING_DIM !== EXPECTED_DIM) {
+  throw new Error(
+    `EMBEDDING_DIM (${EMBEDDING_DIM}) must match database vector dimension (${EXPECTED_DIM})`
+  );
+}
+```
+
+3. **数据库 Migration 明确维度**
+```sql
+-- migrations/xxx_create_vector_table.sql
+CREATE TABLE document_chunks (
+  id BIGSERIAL PRIMARY KEY,
+  notebook_id UUID NOT NULL,
+  source_id UUID NOT NULL,
+  chunk_index INT NOT NULL,
+  content TEXT NOT NULL,
+  metadata JSONB DEFAULT '{}',
+  embedding vector(1024) NOT NULL,  -- 明确写死，不要用变量
+  embedding_model TEXT DEFAULT 'embedding-3',  -- 记录模型版本
+  embedding_dim INT DEFAULT 1024,  -- 记录维度（为未来升级留后路）
+  content_hash TEXT,  -- 用于去重
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_embedding ON document_chunks 
+USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX idx_content_hash ON document_chunks(content_hash);
+```
+
+4. **调用 Embedding API 时强制指定维度**
+```typescript
+// lib/embeddings.ts
+const response = await fetch(`${ZHIPU_BASE_URL}/paas/v4/embeddings`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${ZHIPU_API_KEY}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    model: 'embedding-3',
+    input: texts,
+    dimensions: EMBEDDING_DIM  // 强制指定
+  })
+});
+```
+
+---
+
+### 8.2 文件解析链路错误恢复机制 🔴 P0
+
+**风险描述**
+- PDF 解析失败（损坏文件、加密 PDF、扫描件无文本）
+- Embedding API 429/5xx 错误（限流、服务故障）
+- 网络中断导致部分 chunks 未写入
+- 用户看到"处理中"状态但实际已失败
+
+**解决方案**
+
+1. **增强 Source 表字段**
+```typescript
+// prisma/schema.prisma
+model Source {
+  id            String   @id @default(uuid())
+  notebookId    String
+  type          String   // 'file' | 'url' | 'video'
+  title         String
+  status        String   // 'pending' | 'processing' | 'ready' | 'failed'
+  storagePath   String?
+  url           String?
+  meta          Json?
+  
+  // 新增字段
+  processingLog Json?    // 记录每个阶段的状态
+  lastProcessedChunkIndex Int @default(0)  // 断点续传
+  retryCount    Int      @default(0)
+  errorMessage  String?  // 失败原因
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+```
+
+2. **处理日志结构**
+```typescript
+// types/processing.ts
+interface ProcessingLog {
+  stages: {
+    upload?: { status: 'success' | 'failed', timestamp: string, error?: string };
+    parse?: { status: 'success' | 'failed', pages?: number, error?: string };
+    chunk?: { status: 'success' | 'failed', chunks?: number, error?: string };
+    embed?: { 
+      status: 'success' | 'partial' | 'failed', 
+      success: number, 
+      failed: number, 
+      errors?: string[] 
+    };
+    index?: { status: 'success' | 'failed', error?: string };
+  };
+}
+```
+
+3. **断点续传实现**
+```typescript
+// lib/ingest.ts
+async function ingestSource(sourceId: string) {
+  const source = await prisma.source.findUnique({ where: { id: sourceId } });
+  
+  // 从上次中断的地方继续
+  const startIndex = source.lastProcessedChunkIndex || 0;
+  const chunks = await parseAndChunk(source);
+  
+  for (let i = startIndex; i < chunks.length; i++) {
+    try {
+      const embedding = await getEmbedding(chunks[i].content);
+      await saveChunk(sourceId, i, chunks[i], embedding);
+      
+      // 更新进度
+      await prisma.source.update({
+        where: { id: sourceId },
+        data: { lastProcessedChunkIndex: i + 1 }
+      });
+    } catch (error) {
+      // 记录错误但继续处理
+      await logProcessingError(sourceId, i, error);
+    }
+  }
+}
+```
+
+4. **指数退避重试策略**
+```typescript
+// lib/retry.ts
+const RETRY_DELAYS = [1000, 5000, 15000, 60000]; // ms
+const MAX_RETRIES = 4;
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  context: { sourceId: string; operation: string }
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      
+      // 429 或 5xx 才重试
+      if (error.status === 429 || (error.status >= 500 && error.status < 600)) {
+        const delay = RETRY_DELAYS[attempt] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
+        console.warn(`Retry ${attempt + 1}/${MAX_RETRIES} after ${delay}ms`, context);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw error; // 其他错误直接抛出
+      }
+    }
+  }
+  
+  throw lastError;
+}
+```
+
+---
+
+### 8.3 Citations 跨 Source 去重 🟡 P1
+
+**风险描述**
+- 用户上传同一文档的不同版本（v1.pdf, v2.pdf）
+- 同一段落被引用多次，UI 显示重复引用
+- 浪费 Embedding API 调用（相同内容重复向量化）
+
+**解决方案**
+
+1. **内容哈希去重**
+```typescript
+// lib/chunking.ts
+import crypto from 'crypto';
+
+function hashContent(text: string): string {
+  return crypto.createHash('sha256').update(text.trim()).digest('hex');
+}
+
+async function saveChunkWithDedup(
+  sourceId: string,
+  chunkIndex: number,
+  content: string,
+  metadata: any
+) {
+  const contentHash = hashContent(content);
+  
+  // 检查是否已存在相同内容
+  const existing = await prisma.$queryRaw`
+    SELECT id, embedding 
+    FROM document_chunks 
+    WHERE content_hash = ${contentHash}
+    LIMIT 1
+  `;
+  
+  if (existing.length > 0) {
+    // 复用已有 embedding
+    await prisma.document_chunks.create({
+      data: {
+        sourceId,
+        chunkIndex,
+        content,
+        contentHash,
+        embedding: existing[0].embedding,  // 复用
+        metadata
+      }
+    });
+    return { reused: true };
+  }
+  
+  // 新内容，需要 embedding
+  const embedding = await getEmbedding(content);
+  await prisma.document_chunks.create({
+    data: {
+      sourceId,
+      chunkIndex,
+      content,
+      contentHash,
+      embedding,
+      metadata
+    }
+  });
+  return { reused: false };
+}
+```
+
+2. **检索时去重**
+```typescript
+// lib/retrieval.ts
+function deduplicateCitations(chunks: Chunk[]): Chunk[] {
+  const seen = new Map<string, Chunk>();
+  
+  for (const chunk of chunks) {
+    const hash = chunk.content_hash;
+    if (!seen.has(hash) || chunk.similarity > seen.get(hash)!.similarity) {
+      seen.set(hash, chunk);
+    }
+  }
+  
+  return Array.from(seen.values());
+}
+```
+
+---
+
+### 8.4 流式输出 Citations 时序问题 🟡 P1
+
+**风险描述**
+- Vercel AI SDK 流式返回文本，但 citations 需要在生成完成后才能确定
+- 用户看到答案但引用延迟出现（体验割裂）
+- AI 生成中途失败，citations 可能丢失
+
+**解决方案：双阶段流式**
+
+```typescript
+// app/api/chat/route.ts
+import { StreamingTextResponse } from 'ai';
+
+export async function POST(req: Request) {
+  const { messages, notebookId } = await req.json();
+  const lastMessage = messages[messages.length - 1].content;
+  
+  // 1. 检索相关 chunks
+  const relevantChunks = await retrieveChunks(notebookId, lastMessage);
+  
+  // 2. 构造 prompt
+  const prompt = buildRAGPrompt(lastMessage, relevantChunks);
+  
+  // 3. 调用 GLM-4.7 流式生成
+  const stream = await callGLM4Stream(prompt);
+  
+  // 4. 包装流，在结束时追加 citations
+  const enhancedStream = new ReadableStream({
+    async start(controller) {
+      // 流式输出文本
+      for await (const chunk of stream) {
+        controller.enqueue(new TextEncoder().encode(chunk));
+      }
+      
+      // 文本结束后，追加 citations（使用特殊分隔符）
+      const citationsPayload = JSON.stringify({
+        type: 'citations',
+        data: relevantChunks.map(chunk => ({
+          chunkId: chunk.id,
+          sourceId: chunk.source_id,
+          score: chunk.similarity,
+          locator: chunk.metadata.locator,
+          excerpt: chunk.content.substring(0, 200)
+        })),
+        answerMode: relevantChunks.length > 0 ? 'grounded' : 'no_evidence'
+      });
+      
+      controller.enqueue(new TextEncoder().encode(`\n\n__CITATIONS__${citationsPayload}`));
+      controller.close();
+    }
+  });
+  
+  return new StreamingTextResponse(enhancedStream);
+}
+```
+
+**前端处理**
+```typescript
+// components/ChatPanel.tsx
+const { messages, append } = useChat({
+  api: '/api/chat',
+  onFinish: (message) => {
+    // 解析 citations
+    const parts = message.content.split('__CITATIONS__');
+    if (parts.length === 2) {
+      const textContent = parts[0];
+      const citations = JSON.parse(parts[1]);
+      
+      // 更新消息（移除 citations 标记）
+      updateMessage(message.id, {
+        content: textContent,
+        citations: citations.data,
+        answerMode: citations.answerMode
+      });
+    }
+  }
+});
+```
+
+---
+
+### 8.5 Supabase Storage 文件管理策略 🟡 P1
+
+**风险描述**
+- 文件命名冲突（多用户上传同名文件）
+- 权限泄露（其他用户访问不属于自己的文件）
+- 存储泄漏（删除 Source 后文件未清理）
+
+**解决方案**
+
+1. **文件路径规范**
+```typescript
+// lib/storage.ts
+function getStoragePath(
+  ownerId: string,
+  notebookId: string,
+  sourceId: string,
+  originalFilename: string
+): string {
+  const ext = path.extname(originalFilename);
+  const timestamp = Date.now();
+  return `${ownerId}/${notebookId}/${sourceId}_${timestamp}${ext}`;
+}
+```
+
+2. **Supabase Storage 配置**
+```sql
+-- 1. 创建 private bucket
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('notebook-sources', 'notebook-sources', false);
+
+-- 2. RLS 策略：只允许 owner 访问
+CREATE POLICY "Users can only access their own files"
+ON storage.objects FOR SELECT
+USING (
+  bucket_id = 'notebook-sources' 
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
+
+CREATE POLICY "Users can only upload to their own folder"
+ON storage.objects FOR INSERT
+WITH CHECK (
+  bucket_id = 'notebook-sources' 
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
+
+CREATE POLICY "Users can only delete their own files"
+ON storage.objects FOR DELETE
+USING (
+  bucket_id = 'notebook-sources' 
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
+```
+
+3. **级联删除**
+```typescript
+// app/api/sources/[id]/route.ts
+export async function DELETE(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
+  const sourceId = params.id;
+  const ownerId = await getOwnerIdFromSession();
+  
+  // 1. 获取 Source 信息
+  const source = await prisma.source.findUnique({
+    where: { id: sourceId },
+    include: { notebook: true }
+  });
+  
+  // 2. 权限校验
+  if (source.notebook.ownerId !== ownerId) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  
+  // 3. 删除文件（如果存在）
+  if (source.storagePath) {
+    await supabase.storage
+      .from('notebook-sources')
+      .remove([source.storagePath]);
+  }
+  
+  // 4. 删除 chunks
+  await prisma.document_chunks.deleteMany({
+    where: { sourceId }
+  });
+  
+  // 5. 删除 Source 记录
+  await prisma.source.delete({
+    where: { id: sourceId }
+  });
+  
+  return new Response(null, { status: 204 });
+}
+```
+
+---
+
+### 8.6 预处理队列（解耦上传与处理）🟢 P2
+
+**风险描述**
+- 大文件同步处理导致 API 超时（Next.js API Route 默认 60s）
+- 无法并发处理多个文件
+- 用户上传后需要等待，体验差
+
+**解决方案（一期最简：伪异步）**
+
+1. **创建处理队列表**
+```sql
+-- migrations/xxx_create_processing_queue.sql
+CREATE TABLE processing_queue (
+  id BIGSERIAL PRIMARY KEY,
+  source_id UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  status TEXT DEFAULT 'pending',  -- 'pending' | 'processing' | 'completed' | 'failed'
+  priority INT DEFAULT 1,
+  attempts INT DEFAULT 0,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_queue_status ON processing_queue(status, priority DESC, created_at);
+```
+
+2. **上传时写入队列**
+```typescript
+// app/api/sources/upload/route.ts
+export async function POST(req: Request) {
+  const formData = await req.formData();
+  const file = formData.get('file') as File;
+  
+  // 1. 上传到 Storage
+  const storagePath = await uploadToStorage(file);
+  
+  // 2. 创建 Source 记录
+  const source = await prisma.source.create({
+    data: {
+      notebookId,
+      type: 'file',
+      title: file.name,
+      status: 'pending',
+      storagePath
+    }
+  });
+  
+  // 3. 写入队列（立即返回）
+  await prisma.processing_queue.create({
+    data: {
+      sourceId: source.id,
+      priority: 1
+    }
+  });
+  
+  return Response.json({ sourceId: source.id, status: 'pending' });
+}
+```
+
+3. **Worker 轮询处理**
+```typescript
+// app/api/cron/process-queue/route.ts
+export async function GET(req: Request) {
+  // Vercel Cron Job 每分钟调用一次
+  const jobs = await prisma.processing_queue.findMany({
+    where: { status: 'pending' },
+    orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
+    take: 5  // 每次处理 5 个
+  });
+  
+  await Promise.all(jobs.map(async (job) => {
+    try {
+      await prisma.processing_queue.update({
+        where: { id: job.id },
+        data: { status: 'processing', startedAt: new Date() }
+      });
+      
+      await ingestSource(job.sourceId);
+      
+      await prisma.processing_queue.update({
+        where: { id: job.id },
+        data: { status: 'completed', completedAt: new Date() }
+      });
+    } catch (error) {
+      await prisma.processing_queue.update({
+        where: { id: job.id },
+        data: { 
+          status: 'failed', 
+          errorMessage: error.message,
+          attempts: job.attempts + 1
+        }
+      });
+    }
+  }));
+  
+  return Response.json({ processed: jobs.length });
+}
+```
+
+4. **前端轮询状态**
+```typescript
+// hooks/useSourceStatus.ts
+export function useSourceStatus(sourceId: string) {
+  const { data, error } = useSWR(
+    `/api/sources/${sourceId}`,
+    fetcher,
+    { refreshInterval: 2000 }  // 每 2 秒轮询
+  );
+  
+  return {
+    status: data?.status,
+    progress: data?.lastProcessedChunkIndex,
+    error: data?.errorMessage
+  };
+}
+```
+
+---
+
+### 8.7 混合检索（Hybrid Search）🟢 P2
+
+**风险描述**
+- 纯向量检索可能漏掉关键词匹配（如专有名词、代码片段）
+- 用户问"第 5 页讲了什么"，向量检索可能找不到
+
+**解决方案**
+
+1. **增加全文检索索引**
+```sql
+-- migrations/xxx_add_fulltext_search.sql
+ALTER TABLE document_chunks ADD COLUMN content_tsv tsvector;
+
+-- 自动更新 tsvector
+CREATE OR REPLACE FUNCTION update_content_tsv() RETURNS trigger AS $$
+BEGIN
+  NEW.content_tsv := to_tsvector('english', NEW.content);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tsvector_update BEFORE INSERT OR UPDATE
+ON document_chunks FOR EACH ROW EXECUTE FUNCTION update_content_tsv();
+
+-- 创建 GIN 索引
+CREATE INDEX idx_content_fts ON document_chunks USING GIN(content_tsv);
+```
+
+2. **混合检索 RPC**
+```sql
+CREATE OR REPLACE FUNCTION hybrid_search(
+  p_notebook_id uuid,
+  p_query_embedding vector(1024),
+  p_query_text text,
+  p_match_count int DEFAULT 8,
+  p_vector_weight float DEFAULT 0.7,
+  p_fts_weight float DEFAULT 0.3
+)
+RETURNS TABLE (
+  id bigint,
+  source_id uuid,
+  chunk_index int,
+  content text,
+  metadata jsonb,
+  vector_score float,
+  fts_score float,
+  combined_score float
+)
+LANGUAGE sql STABLE
+AS $$
+  WITH vector_results AS (
+    SELECT 
+      c.*,
+      1 - (c.embedding <=> p_query_embedding) AS vector_score,
+      0::float AS fts_score
+    FROM document_chunks c
+    WHERE c.notebook_id = p_notebook_id
+    ORDER BY c.embedding <=> p_query_embedding
+    LIMIT p_match_count * 2
+  ),
+  fts_results AS (
+    SELECT 
+      c.*,
+      0::float AS vector_score,
+      ts_rank(c.content_tsv, plainto_tsquery('english', p_query_text)) AS fts_score
+    FROM document_chunks c
+    WHERE c.notebook_id = p_notebook_id 
+      AND c.content_tsv @@ plainto_tsquery('english', p_query_text)
+    ORDER BY fts_score DESC
+    LIMIT p_match_count * 2
+  ),
+  combined AS (
+    SELECT * FROM vector_results
+    UNION ALL
+    SELECT * FROM fts_results
+  )
+  SELECT DISTINCT ON (c.id)
+    c.id,
+    c.source_id,
+    c.chunk_index,
+    c.content,
+    c.metadata,
+    MAX(c.vector_score) AS vector_score,
+    MAX(c.fts_score) AS fts_score,
+    (MAX(c.vector_score) * p_vector_weight + MAX(c.fts_score) * p_fts_weight) AS combined_score
+  FROM combined c
+  GROUP BY c.id, c.source_id, c.chunk_index, c.content, c.metadata
+  ORDER BY c.id, combined_score DESC
+  LIMIT p_match_count;
+$$;
+```
+
+---
+
+### 8.8 Embedding 缓存策略 🟢 P2
+
+**风险描述**
+- 相同问题重复调用 Embedding API（浪费成本）
+- 高频问题（如"这个文档讲了什么"）每次都重新 embedding
+
+**解决方案**
+
+1. **Query Embedding 缓存（使用 Vercel KV）**
+```typescript
+// lib/embeddings.ts
+import { kv } from '@vercel/kv';
+import crypto from 'crypto';
+
+async function getQueryEmbedding(text: string): Promise<number[]> {
+  const cacheKey = `embed:query:${crypto.createHash('md5').update(text).digest('hex')}`;
+  
+  // 1. 尝试从缓存读取
+  const cached = await kv.get<number[]>(cacheKey);
+  if (cached) {
+    console.log('Cache hit for query embedding');
+    return cached;
+  }
+  
+  // 2. 调用 API
+  const embedding = await callEmbeddingAPI(text);
+  
+  // 3. 写入缓存（1 小时过期）
+  await kv.setex(cacheKey, 3600, embedding);
+  
+  return embedding;
+}
+```
+
+2. **Chunk Embedding 去重（已在 8.3 中实现）**
+
+---
+
+## 9. 交付物清单（一期）
 
 - 可登录（Supabase Auth）
 - Notebook 列表 + Notebook 详情三栏布局
@@ -353,5 +1057,6 @@ $$;
 - RAG 流式问答 + 引文高亮
 - Studio 动作（至少 2 个）+ 产物列表
 - RAG 链路可视化 Lite（检索结果面板）
+- **架构风险缓解措施（8.1-8.5 必须实现，8.6-8.8 可选）**
 
 

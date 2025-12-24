@@ -1,0 +1,157 @@
+// Prisma Schema for NotebookLM Clone
+// 基于 PROJECT_SPEC.md 第 5 章数据模型
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// 核心业务表（Prisma 管理）
+// ============================================
+
+model Notebook {
+  id            String    @id @default(uuid())
+  ownerId       String    // Supabase Auth user id
+  title         String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastOpenedAt  DateTime  @default(now())
+
+  // 关联
+  sources              Source[]
+  messages             Message[]
+  artifacts            Artifact[]
+  suggestedQuestions   SuggestedQuestion[]
+
+  @@index([ownerId])
+  @@index([lastOpenedAt])
+  @@map("notebooks")
+}
+
+model Source {
+  id                      String   @id @default(uuid())
+  notebookId              String
+  type                    String   // 'file' | 'url' | 'video'
+  title                   String
+  status                  String   @default("pending") // 'pending' | 'processing' | 'ready' | 'failed'
+  storagePath             String?  // Supabase Storage 路径
+  url                     String?  // 链接 URL
+  meta                    Json?    // 元信息（页数、mime、抓取信息等）
+  
+  // 🔴 架构风险 8.2: 错误恢复字段
+  processingLog           Json?    // 处理日志
+  lastProcessedChunkIndex Int      @default(0) // 断点续传
+  retryCount              Int      @default(0)
+  errorMessage            String?  // 失败原因
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  // 关联
+  notebook                Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId])
+  @@index([status])
+  @@map("sources")
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  notebookId String
+  role       String   // 'user' | 'assistant' | 'system'
+  content    String   @db.Text
+  citations  Json?    // 引用结构（见 PROJECT_SPEC.md 6.2）
+  
+  // 🔴 新增字段（PROJECT_SPEC.md 6.2 & 8.4）
+  answerMode String?  // 'grounded' | 'no_evidence' | null（用户消息为 null）
+  metadata   Json?    // { retrievalMs, generationMs, model, topK, chunkCount }
+  parentId   String?  // 预留：消息分支/重新生成（二期功能）
+  
+  createdAt  DateTime @default(now())
+
+  // 关联
+  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+model Artifact {
+  id         String   @id @default(uuid())
+  notebookId String
+  type       String   // 'summary' | 'outline' | 'quiz' | 'custom'
+  input      Json     // prompt、source 选择等
+  content    String   @db.Text // Markdown 或 JSON
+  createdAt  DateTime @default(now())
+
+  // 关联
+  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId])
+  @@index([createdAt])
+  @@map("artifacts")
+}
+
+model PromptTemplate {
+  id          String   @id @default(uuid())
+  ownerId     String   // Supabase Auth user id
+  name        String
+  description String?
+  template    String   @db.Text // 包含 {{variable}} 占位符
+  variables   String[] // ['topic', 'format']
+  isSystem    Boolean  @default(false) // 系统预设 vs 用户自定义
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([isSystem])
+  @@map("prompt_templates")
+}
+
+// ============================================
+// 处理队列表（架构风险 8.6）
+// ============================================
+
+model ProcessingQueue {
+  id           BigInt   @id @default(autoincrement())
+  sourceId     String
+  status       String   @default("pending") // 'pending' | 'processing' | 'completed' | 'failed'
+  priority     Int      @default(1)
+  attempts     Int      @default(0)
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  @@index([status, priority, createdAt])
+  @@map("processing_queue")
+}
+
+// ============================================
+// 建议问题表（ROADMAP Week 2）
+// ============================================
+
+model SuggestedQuestion {
+  id         String   @id @default(uuid())
+  notebookId String
+  question   String   @db.Text
+  isUsed     Boolean  @default(false) // 用户是否已点击使用此问题
+  createdAt  DateTime @default(now())
+
+  // 关联
+  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId])
+  @@index([createdAt])
+  @@map("suggested_questions")
+}
+
+// ============================================
+// 注意：向量表 document_chunks 使用 SQL 迁移创建
+// 见 prisma/migrations/xxx_create_vector_table.sql
+// ============================================
