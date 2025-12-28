@@ -77,7 +77,94 @@ npx tsx scripts/test-supabase.ts
 
 如果看到 `✅ Supabase 连接成功!`，说明配置正确。
 
-## 6. 启用 Supabase 扩展（可选）
+## 6. 创建 Storage Bucket
+
+为了支持文件上传功能，需要创建 Storage bucket：
+
+1. 在 Supabase Dashboard 中，进入 **Storage**
+2. 点击 **New bucket**
+3. 创建名为 `notebook-sources` 的 bucket：
+   - Name: `notebook-sources`
+   - Public bucket: **关闭**（私有）
+   - File size limit: `50MB`
+   - Allowed MIME types: `application/pdf`
+
+### 配置 RLS 策略
+
+在 **Storage** → **Policies** 中，为 `notebook-sources` bucket 添加以下策略：
+
+#### 方法 1：使用 UI 界面（推荐）
+
+1. 点击 **New Policy**
+2. 选择 **For full customization**
+
+**上传策略 (INSERT)**:
+- Policy name: `Users can upload to their own folder`
+- Allowed operation: `INSERT`
+- Policy definition (WITH CHECK):
+```sql
+bucket_id = 'notebook-sources' AND
+auth.uid()::text = (storage.foldername(name))[1]
+```
+
+**读取策略 (SELECT)**:
+- Policy name: `Users can read their own files`
+- Allowed operation: `SELECT`
+- Policy definition (USING):
+```sql
+bucket_id = 'notebook-sources' AND
+auth.uid()::text = (storage.foldername(name))[1]
+```
+
+**删除策略 (DELETE)**:
+- Policy name: `Users can delete their own files`
+- Allowed operation: `DELETE`
+- Policy definition (USING):
+```sql
+bucket_id = 'notebook-sources' AND
+auth.uid()::text = (storage.foldername(name))[1]
+```
+
+#### 方法 2：使用 SQL Editor（如果 UI 不工作）
+
+如果你需要使用 SQL Editor，进入 **SQL Editor** 并执行：
+
+```sql
+-- 上传策略
+CREATE POLICY "Users can upload to their own folder"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'notebook-sources' AND
+  auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- 读取策略
+CREATE POLICY "Users can read their own files"
+ON storage.objects FOR SELECT
+TO authenticated
+USING (
+  bucket_id = 'notebook-sources' AND
+  auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- 删除策略
+CREATE POLICY "Users can delete their own files"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'notebook-sources' AND
+  auth.uid()::text = (storage.foldername(name))[1]
+);
+```
+
+**注意**: 
+- 在 Storage Policies UI 中，不要包含 `CREATE POLICY` 语句
+- 只需要填写 `WITH CHECK` 或 `USING` 后面的条件表达式
+- 文件路径格式为: `{userId}/{notebookId}/{sourceId}_{timestamp}.pdf`
+- `storage.foldername(name)[1]` 提取路径的第一部分（userId）
+
+## 7. 启用 Supabase 扩展（可选）
 
 如果需要使用向量搜索功能，需要在 Supabase 中启用 pgvector 扩展：
 
