@@ -13,6 +13,7 @@ import { StudioModeSelect } from './studio-mode-select'
 import { StudioActions, type ArtifactType } from './studio-actions'
 import { ArtifactList } from './artifact-list'
 import { ArtifactViewer } from './artifact-viewer'
+import { TemplateLibrary } from './template-library'
 import { useStudioMode } from '@/hooks/use-studio-mode'
 import type { Artifact } from './artifact-card'
 
@@ -28,6 +29,7 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatingType, setGeneratingType] = useState<ArtifactType>()
   const [isLoading, setIsLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'artifacts' | 'templates'>('artifacts')
 
   // 加载产物列表
   const loadArtifacts = useCallback(async () => {
@@ -191,18 +193,55 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
       {/* 分隔线 */}
       <div className="border-t my-4" />
 
-      {/* 产物列表 */}
+      {/* 标签切换 */}
+      <div className="flex border-b mb-4">
+        <button
+          className={`flex-1 pb-2 text-sm font-medium transition-colors ${
+            activeTab === 'artifacts'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setActiveTab('artifacts')}
+        >
+          已生成产物
+        </button>
+        <button
+          className={`flex-1 pb-2 text-sm font-medium transition-colors ${
+            activeTab === 'templates'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setActiveTab('templates')}
+        >
+          模板库
+        </button>
+      </div>
+
+      {/* 内容区域 */}
       <div className="flex-1 overflow-auto">
-        <h3 className="text-sm font-medium mb-2">已生成的产物</h3>
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground text-center py-4">
-            加载中...
-          </p>
+        {activeTab === 'artifacts' ? (
+          <>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                加载中...
+              </p>
+            ) : (
+              <ArtifactList
+                artifacts={artifacts}
+                onDelete={handleDelete}
+                onSelect={handleSelect}
+              />
+            )}
+          </>
         ) : (
-          <ArtifactList
-            artifacts={artifacts}
-            onDelete={handleDelete}
-            onSelect={handleSelect}
+          <TemplateLibrary
+            notebookId={notebookId}
+            onArtifactGenerated={(artifact) => {
+              setArtifacts((prev) => [artifact, ...prev])
+              setSelectedArtifact(artifact)
+              setActiveTab('artifacts')
+            }}
+            disabled={disabled}
           />
         )}
       </div>

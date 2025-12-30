@@ -3,7 +3,7 @@
  * US-008: Studio 动作生成产物
  */
 
-export { generateArtifact, type StudioMode, type GenerateResult } from './generator'
+export { generateArtifact, generateFromTemplate, type StudioMode, type GenerateResult } from './generator'
 export { getPrompt, type ArtifactType } from './prompts'
 export { 
   getSourceContentSmart, 

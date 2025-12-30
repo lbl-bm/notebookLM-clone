@@ -18,12 +18,13 @@ import {
   Check
 } from 'lucide-react'
 import { Tooltip, Popconfirm, message } from 'antd'
+import { Sparkles } from 'lucide-react'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatDistanceToNow } = require('date-fns')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { zhCN } = require('date-fns/locale')
 
-export type ArtifactType = 'summary' | 'outline' | 'quiz' | 'mindmap'
+export type ArtifactType = 'summary' | 'outline' | 'quiz' | 'mindmap' | 'custom'
 
 export interface Artifact {
   id: string
@@ -43,6 +44,7 @@ const typeConfig: Record<ArtifactType, { icon: React.ReactNode; label: string }>
   outline: { icon: <List className="h-4 w-4" />, label: '大纲' },
   quiz: { icon: <HelpCircle className="h-4 w-4" />, label: '测验' },
   mindmap: { icon: <Network className="h-4 w-4" />, label: '思维导图' },
+  custom: { icon: <Sparkles className="h-4 w-4" />, label: '自定义' },
 }
 
 export function ArtifactCard({ artifact, onDelete, onSelect }: ArtifactCardProps) {

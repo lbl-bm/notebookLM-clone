@@ -389,13 +389,13 @@ function ContentWithCitations({
   // 自定义组件：将 [1] [2] 等标记渲染为可点击按钮
   const components = useMemo(() => ({
     // 自定义 text 节点处理
-    p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => {
+    p: ({ children, streamStatus, ...props }: any) => {
       return <p {...props}>{processChildren(children, citations, onCitationClick)}</p>
     },
-    li: ({ children, ...props }: React.HTMLAttributes<HTMLLIElement>) => {
+    li: ({ children, streamStatus, ...props }: any) => {
       return <li {...props}>{processChildren(children, citations, onCitationClick)}</li>
     },
-    span: ({ children, ...props }: React.HTMLAttributes<HTMLSpanElement>) => {
+    span: ({ children, streamStatus, ...props }: any) => {
       return <span {...props}>{processChildren(children, citations, onCitationClick)}</span>
     },
   }), [citations, onCitationClick])

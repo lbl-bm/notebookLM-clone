@@ -261,3 +261,53 @@ export async function generateArtifact(params: {
     throw error
   }
 }
+
+/**
+ * 基于模板生成产物
+ */
+export async function generateFromTemplate(params: {
+  notebookId: string
+  template: string
+  variables: Record<string, string>
+  sourceIds?: string[]
+}): Promise<GenerateResult> {
+  const { notebookId, template, variables, sourceIds } = params
+  const startTime = Date.now()
+
+  console.log(`[Studio] 开始基于模板生成`)
+
+  // 1. 获取上下文（如果模板包含 {{context}}）
+  let finalPrompt = template
+  let stats: ContentStats = {
+    totalChunks: 0,
+    usedChunks: 0,
+    estimatedTokens: 0,
+    sourceCount: 0,
+  }
+
+  if (template.includes('{{context}}')) {
+    const { content: context, stats: contextStats } = await getSourceContentSmart(notebookId, sourceIds)
+    finalPrompt = finalPrompt.replaceAll('{{context}}', context)
+    stats = contextStats
+  }
+
+  // 2. 替换其他变量
+  for (const [key, value] of Object.entries(variables)) {
+    if (key === 'context') continue // 已经处理过了
+    const placeholder = `{{${key}}}`
+    finalPrompt = finalPrompt.replaceAll(placeholder, value)
+  }
+
+  // 3. 调用 LLM
+  const content = await callLLM(finalPrompt, TIMEOUT_PRECISE)
+
+  return {
+    content,
+    stats: {
+      ...stats,
+      mode: 'precise',
+      strategy: 'template',
+      duration: Date.now() - startTime,
+    },
+  }
+}
