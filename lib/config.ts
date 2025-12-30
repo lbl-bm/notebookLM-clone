@@ -29,6 +29,7 @@ export const zhipuConfig = {
   baseUrl: process.env.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api',
   embeddingModel: process.env.ZHIPU_EMBEDDING_MODEL || 'embedding-3',
   chatModel: process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
+  studioModel: process.env.ZHIPU_STUDIO_MODEL || process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
 }
 
 // 应用配置

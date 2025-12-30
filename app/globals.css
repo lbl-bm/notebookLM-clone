@@ -171,3 +171,48 @@
 .ant-sender-input {
   background: transparent !important;
 }
+
+/* Bubble 组件样式优化 */
+.ant-bubble-list {
+  height: 100%;
+}
+
+.ant-bubble-content {
+  max-width: 85%;
+}
+
+/* Markdown 内容样式 */
+.prose pre {
+  background-color: #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.prose code {
+  background-color: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.dark .prose code {
+  background-color: #334155;
+}
+
+/* XMarkdown 流式动画 */
+.ant-x-markdown-streaming::after {
+  content: '▋';
+  animation: blink 1s infinite;
+  color: #1677ff;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}

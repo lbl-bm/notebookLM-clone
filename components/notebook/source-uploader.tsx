@@ -1,7 +1,7 @@
 /**
  * 添加来源模态框组件
  * US-003 & US-004: 完整的添加来源体验
- * 包含搜索框 + 文件上传区域
+ * 包含搜索框 + 文件上传区域 + URL添加
  */
 
 'use client'
@@ -14,6 +14,7 @@ import {
   DialogContent,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Upload,
   Link2,
@@ -22,6 +23,8 @@ import {
   X,
   CheckCircle2,
   Youtube,
+  Globe,
+  AlertCircle,
 } from 'lucide-react'
 import { SourceSearchBox } from './add-source-dialog'
 
@@ -62,6 +65,12 @@ export function AddSourceModal({
   const attachmentsRef = useRef<AttachmentsRef>(null)
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  
+  // URL 输入状态
+  const [showUrlInput, setShowUrlInput] = useState(false)
+  const [urlValue, setUrlValue] = useState('')
+  const [urlLoading, setUrlLoading] = useState(false)
+  const [urlError, setUrlError] = useState('')
 
   const handleUpload = (file: FileType) => {
     const uid = file.uid || crypto.randomUUID()
@@ -129,6 +138,67 @@ export function AddSourceModal({
     onSuccess?.()
   }
 
+  // 处理添加 URL
+  const handleAddUrl = async () => {
+    const url = urlValue.trim()
+    if (!url) return
+
+    // 验证 URL 格式
+    try {
+      const urlObj = new URL(url)
+      if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+        setUrlError('仅支持 http/https 链接')
+        return
+      }
+    } catch {
+      setUrlError('请输入有效的网址')
+      return
+    }
+
+    setUrlError('')
+    setUrlLoading(true)
+
+    try {
+      const response = await fetch('/api/sources/url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          url,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '添加失败')
+      }
+
+      // 成功后清空并关闭输入框
+      setUrlValue('')
+      setShowUrlInput(false)
+      
+      // 如果有警告，显示一下
+      if (data.warning) {
+        setUrlError(data.warning)
+        setTimeout(() => setUrlError(''), 3000)
+      }
+
+      onSuccess?.()
+    } catch (err) {
+      setUrlError((err as Error).message)
+    } finally {
+      setUrlLoading(false)
+    }
+  }
+
+  const handleWebsiteClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setShowUrlInput(true)
+    setUrlError('')
+  }
+
   const progress = Math.round((currentSourceCount / maxSourceCount) * 100)
 
   return (
@@ -148,7 +218,6 @@ export function AddSourceModal({
               <SourceSearchBox
                 notebookId={notebookId}
                 onSuccess={handleSearchSuccess}
-                inModal
               />
             </div>
           </div>
@@ -194,12 +263,11 @@ export function AddSourceModal({
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                      disabled
+                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      onClick={handleWebsiteClick}
                     >
                       <div className="flex items-center gap-1">
-                        <Link2 className="h-4 w-4" />
-                        <Youtube className="h-4 w-4 text-red-400" />
+                        <Globe className="h-4 w-4" />
                       </div>
                       网站
                     </Button>
@@ -217,6 +285,59 @@ export function AddSourceModal({
               </Attachments>
             </div>
           </div>
+
+          {/* URL 输入区域 */}
+          {showUrlInput && (
+            <div className="flex justify-center">
+              <div className="w-full max-w-md space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    type="url"
+                    placeholder="输入网页链接（http:// 或 https://）"
+                    value={urlValue}
+                    onChange={(e) => {
+                      setUrlValue(e.target.value)
+                      setUrlError('')
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+                    className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                    autoFocus
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleAddUrl}
+                    disabled={!urlValue.trim() || urlLoading}
+                    className="h-10 px-4"
+                  >
+                    {urlLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      '添加'
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10"
+                    onClick={() => {
+                      setShowUrlInput(false)
+                      setUrlValue('')
+                      setUrlError('')
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                {urlError && (
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-600 dark:text-amber-400">{urlError}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* 上传进度列表 */}
           {uploadingFiles.length > 0 && (

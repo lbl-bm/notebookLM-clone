@@ -58,7 +58,7 @@ export default async function NotebookDetailPage({ params }: PageProps) {
   })
 
   return (
-    <div className="min-h-screen bg-muted/30 flex flex-col">
+    <div className="h-screen bg-muted/30 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="border-b bg-card flex-shrink-0 shadow-sm">
         <div className="container mx-auto px-4 py-3 flex items-center justify-between">

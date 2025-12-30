@@ -59,11 +59,26 @@ interface Source {
   errorMessage?: string | null
   processingLog?: unknown
   createdAt: Date
+  updatedAt?: Date
+}
+
+interface SourceMeta {
+  size?: number
+  originalName?: string
+  urlType?: string
+  warning?: string
+  fetchedTitle?: string
+  originalUrl?: string
+  addedAt?: string
+  lastRefetchAt?: string
+  wordCount?: number
+  contentPreview?: string
 }
 
 interface SourceCardProps {
   source: Source
   onDelete?: () => void
+  isHighlighted?: boolean
 }
 
 const statusConfig: Record<string, {
@@ -78,6 +93,20 @@ const statusConfig: Record<string, {
     label: '待处理',
     color: 'text-amber-600 dark:text-amber-400',
     bgColor: 'bg-amber-100 dark:bg-amber-900/30',
+  },
+  fetching: {
+    icon: Loader2,
+    label: '抓取中',
+    color: 'text-blue-600 dark:text-blue-400',
+    bgColor: 'bg-blue-100 dark:bg-blue-900/30',
+    animate: true,
+  },
+  parsing: {
+    icon: Loader2,
+    label: '解析中',
+    color: 'text-purple-600 dark:text-purple-400',
+    bgColor: 'bg-purple-100 dark:bg-purple-900/30',
+    animate: true,
   },
   processing: {
     icon: Loader2,
@@ -100,7 +129,7 @@ const statusConfig: Record<string, {
   },
 }
 
-export function SourceCard({ source, onDelete }: SourceCardProps) {
+export function SourceCard({ source, onDelete, isHighlighted }: SourceCardProps) {
   const router = useRouter()
   const { toast } = useToast()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -109,9 +138,9 @@ export function SourceCard({ source, onDelete }: SourceCardProps) {
 
   const status = statusConfig[source.status] || statusConfig.pending
   const StatusIcon = status.icon
-  const meta = source.meta as { size?: number; originalName?: string; urlType?: string; warning?: string } | null
+  const meta = (source.meta || {}) as SourceMeta
   const isUrl = source.type === 'url'
-  const isVideo = meta?.urlType === 'video'
+  const isVideo = meta.urlType === 'video'
 
   // 获取图标
   const getSourceIcon = () => {
@@ -187,12 +216,16 @@ export function SourceCard({ source, onDelete }: SourceCardProps) {
     }
   }
 
-  const fileSize = meta?.size ? formatFileSize(meta.size) : null
+  const fileSize = meta.size ? formatFileSize(meta.size) : null
 
   return (
     <>
       <div
-        className="group flex items-center gap-3 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+        className={`group flex items-center gap-3 p-2 rounded-lg transition-all cursor-pointer ${
+          isHighlighted 
+            ? 'bg-blue-50 dark:bg-blue-900/30 ring-2 ring-blue-300 dark:ring-blue-600' 
+            : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
+        }`}
         onClick={() => setShowDetailDialog(true)}
       >
         {/* 文件图标 */}
@@ -304,6 +337,14 @@ export function SourceCard({ source, onDelete }: SourceCardProps) {
               </div>
             )}
 
+            {/* 网页标题（如果与显示标题不同） */}
+            {meta.fetchedTitle && meta.fetchedTitle !== source.title && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">网页标题</span>
+                <span className="text-sm truncate max-w-[200px]">{meta.fetchedTitle}</span>
+              </div>
+            )}
+
             {/* 文件大小 */}
             {fileSize && (
               <div className="flex items-center justify-between">
@@ -312,14 +353,40 @@ export function SourceCard({ source, onDelete }: SourceCardProps) {
               </div>
             )}
 
-            {/* 上传时间 */}
+            {/* 字数统计 */}
+            {meta.wordCount && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">字数统计</span>
+                <span className="text-sm">{meta.wordCount.toLocaleString()} 字</span>
+              </div>
+            )}
+
+            {/* 添加时间 */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">添加时间</span>
               <span className="text-sm">{formatRelativeTime(source.createdAt)}</span>
             </div>
 
+            {/* 最后抓取时间 */}
+            {meta.lastRefetchAt && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">最后抓取</span>
+                <span className="text-sm">{formatRelativeTime(new Date(meta.lastRefetchAt))}</span>
+              </div>
+            )}
+
+            {/* 内容预览 */}
+            {meta.contentPreview && (
+              <div className="space-y-1">
+                <span className="text-sm text-muted-foreground">内容预览</span>
+                <p className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg line-clamp-4">
+                  {meta.contentPreview}
+                </p>
+              </div>
+            )}
+
             {/* 警告信息 */}
-            {meta?.warning && (
+            {meta.warning && (
               <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
                 <p className="text-sm text-yellow-700 dark:text-yellow-400">{meta.warning}</p>
               </div>
