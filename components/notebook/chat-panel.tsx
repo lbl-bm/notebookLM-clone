@@ -12,8 +12,17 @@ import { XMarkdown } from '@ant-design/x-markdown'
 import type { BubbleItemType } from '@ant-design/x'
 import { Card } from '@/components/ui/card'
 import { MessageSquare, FileText, Globe, User, Bot, AlertCircle } from 'lucide-react'
-import { Avatar, Tooltip } from 'antd'
+import { Avatar, Tooltip, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
+import { RetrievalDetailsPanel } from './retrieval-details-panel'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import { Search } from 'lucide-react'
 
 // 引入 markdown 样式
 import '@ant-design/x-markdown/es/XMarkdown/index.css'
@@ -25,6 +34,7 @@ interface Message {
   createdAt: Date
   citations?: unknown
   answerMode?: string | null
+  retrievalDetails?: any
 }
 
 interface ChatPanelProps {
@@ -55,14 +65,41 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     const isNoEvidence = msg.answerMode === 'no_evidence'
     const citations = msg.citations as Citation[] | undefined
     const hasCitations = citations && citations.length > 0
+    const retrievalDetails = msg.retrievalDetails
     
     let footer: React.ReactNode = undefined
     if (msg.role === 'assistant') {
-      if (hasCitations) {
-        footer = <CitationList citations={citations} />
-      } else if (isNoEvidence) {
-        footer = <NoEvidenceHint />
-      }
+      footer = (
+        <div className="space-y-2">
+          {hasCitations && <CitationList citations={citations} />}
+          {isNoEvidence && <NoEvidenceHint />}
+          {retrievalDetails && (
+            <div className="flex justify-end">
+              <Sheet>
+                <SheetTrigger asChild>
+                  <AntButton 
+                    type="text" 
+                    size="small" 
+                    icon={<Search size={12} />}
+                    className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1"
+                  >
+                    查看检索详情
+                  </AntButton>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[400px] sm:w-[540px] p-0">
+                  <SheetHeader className="p-4 border-b">
+                    <SheetTitle className="flex items-center gap-2">
+                      <Search className="w-5 h-5 text-primary" />
+                      RAG 检索链路详情
+                    </SheetTitle>
+                  </SheetHeader>
+                  <RetrievalDetailsPanel details={retrievalDetails} />
+                </SheetContent>
+              </Sheet>
+            </div>
+          )}
+        </div>
+      )
     }
 
     return {
@@ -131,7 +168,13 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
         const data = await response.json()
         setMessages(prev => prev.map(m => 
           m.id === aiMessageId 
-            ? { ...m, content: data.content, citations: data.citations, answerMode: data.answerMode }
+            ? { 
+                ...m, 
+                content: data.content, 
+                citations: data.citations, 
+                answerMode: data.answerMode,
+                retrievalDetails: data.retrievalDetails 
+              }
             : m
         ))
         setCurrentCitations(data.citations || [])
@@ -145,6 +188,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       const decoder = new TextDecoder()
       let fullContent = ''
       let citations: Citation[] = []
+      let retrievalDetails: any = null
 
       while (true) {
         const { done, value } = await reader.read()
@@ -162,6 +206,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
             try {
               const citationsData = JSON.parse(citationsMatch[1])
               citations = citationsData.citations || []
+              retrievalDetails = citationsData.retrievalDetails || null
             } catch {
               // 忽略解析错误
             }
@@ -173,7 +218,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
         // 更新消息内容
         setMessages(prev => prev.map(m => 
           m.id === aiMessageId 
-            ? { ...m, content: fullContent, citations }
+            ? { ...m, content: fullContent, citations, retrievalDetails }
             : m
         ))
         

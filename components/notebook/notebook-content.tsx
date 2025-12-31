@@ -44,6 +44,7 @@ interface Message {
   createdAt: Date
   citations?: Citation[] | null | unknown
   answerMode?: string | null
+  metadata?: any
 }
 
 interface Notebook {
@@ -67,6 +68,14 @@ export function NotebookContent({ notebook }: NotebookContentProps) {
     return notebook.sources.filter(s => s.status === 'ready').length
   }, [notebook.sources])
 
+  // 预处理消息，提取 metadata 中的 retrievalDetails
+  const processedMessages = useMemo(() => {
+    return notebook.messages.map(msg => ({
+      ...msg,
+      retrievalDetails: (msg.metadata as any)?.retrievalDetails
+    }))
+  }, [notebook.messages])
+
   return (
     <CitationProvider>
       <main className="flex-1 flex min-h-0 p-4 gap-4">
@@ -88,7 +97,7 @@ export function NotebookContent({ notebook }: NotebookContentProps) {
         <div className="flex-1 min-w-0 h-full">
           <ChatPanel
             notebookId={notebook.id}
-            initialMessages={notebook.messages as Message[]}
+            initialMessages={processedMessages as any}
           />
         </div>
 
