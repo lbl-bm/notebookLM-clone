@@ -59,7 +59,4 @@ export function validateEnv() {
       `请复制 .env.example 到 .env.local 并填写实际值。`
     )
   }
-
-  console.log('✅ 环境变量验证通过')
-  console.log(`✅ 向量维度: ${EMBEDDING_DIM}`)
 }

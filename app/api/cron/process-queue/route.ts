@@ -139,8 +139,6 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    console.log(`[Cron] 开始处理 Source: ${source.id} (${source.type})`)
-
     // 更新队列状态
     await updateQueueRecord(source.id, 'processing')
 
@@ -151,7 +149,6 @@ export async function GET(request: NextRequest) {
     await updateQueueRecord(source.id, 'completed')
 
     const duration = Date.now() - startTime
-    console.log(`[Cron] 处理完成: ${source.id}，耗时 ${duration}ms`)
 
     return NextResponse.json({
       success: true,

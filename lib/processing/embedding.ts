@@ -123,9 +123,6 @@ async function callEmbeddingApiWithRetry(texts: string[]): Promise<number[][]> {
       
       if (shouldRetry(lastError, attempt)) {
         const delay = getBackoffDelay(attempt)
-        console.warn(
-          `[Embedding] 重试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}，等待 ${delay}ms`
-        )
         await new Promise(resolve => setTimeout(resolve, delay))
       } else {
         throw lastError
