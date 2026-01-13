@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { message } from 'antd'
+import { toast } from '@/hooks/use-toast'
 import type { PromptTemplate } from '@/types'
 
 interface TemplateLibraryProps {
@@ -58,7 +58,10 @@ export function TemplateLibrary({
       }
     } catch (error) {
       console.error('加载模板失败:', error)
-      message.error('加载模板失败')
+      toast({
+        title: '加载模板失败',
+        variant: 'destructive',
+      })
     } finally {
       setIsLoading(false)
     }
@@ -71,7 +74,10 @@ export function TemplateLibrary({
   // 保存模板
   const handleSaveTemplate = async () => {
     if (!editingTemplate?.name || !editingTemplate?.template) {
-      message.warning('名称和内容不能为空')
+      toast({
+        title: '名称和内容不能为空',
+        variant: 'destructive',
+      })
       return
     }
 
@@ -95,7 +101,9 @@ export function TemplateLibrary({
       })
 
       if (response.ok) {
-        message.success(isEditing ? '已更新' : '已创建')
+        toast({
+          title: isEditing ? '已更新' : '已创建',
+        })
         setIsDialogOpen(false)
         loadTemplates()
       } else {
@@ -104,7 +112,10 @@ export function TemplateLibrary({
       }
     } catch (error) {
       console.error('保存模板失败:', error)
-      message.error((error as Error).message)
+      toast({
+        title: (error as Error).message,
+        variant: 'destructive',
+      })
     } finally {
       setIsSaving(false)
     }
@@ -120,14 +131,19 @@ export function TemplateLibrary({
       })
 
       if (response.ok) {
-        message.success('已删除')
+        toast({
+          title: '已删除',
+        })
         loadTemplates()
       } else {
         throw new Error('删除失败')
       }
     } catch (error) {
       console.error('删除模板失败:', error)
-      message.error('删除失败')
+      toast({
+        title: '删除失败',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -149,7 +165,9 @@ export function TemplateLibrary({
 
       const data = await response.json()
       if (response.ok) {
-        message.success('生成成功')
+        toast({
+          title: '生成成功',
+        })
         onArtifactGenerated(data.artifact)
         setIsRunningDialogOpen(false)
       } else {
@@ -157,7 +175,10 @@ export function TemplateLibrary({
       }
     } catch (error) {
       console.error('运行模板失败:', error)
-      message.error((error as Error).message)
+      toast({
+        title: (error as Error).message,
+        variant: 'destructive',
+      })
     } finally {
       setIsRunning(false)
       setRunningTemplateId(null)

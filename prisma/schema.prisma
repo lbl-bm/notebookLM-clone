@@ -84,7 +84,8 @@ model Message {
 model Artifact {
   id         String   @id @default(uuid())
   notebookId String
-  type       String   // 'summary' | 'outline' | 'quiz' | 'custom'
+  type       String   // 'summary' | 'outline' | 'quiz' | 'mindmap' | 'custom'
+  title      String?  // 自定义标题，默认为 null
   input      Json     // prompt、source 选择等
   content    String   @db.Text // Markdown 或 JSON
   createdAt  DateTime @default(now())
