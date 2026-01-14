@@ -14,6 +14,7 @@ import { processWebpage, downloadPdfFromUrl, detectUrlType } from './web-parser'
 import { textSplitter, Chunk, countTokens } from './text-splitter'
 import { generateEmbeddings, ChunkWithEmbedding } from './embedding'
 import { EMBEDDING_DIM } from '@/lib/config'
+import { vectorStore } from '@/lib/db/vector-store'
 
 /**
  * 处理阶段
@@ -73,50 +74,6 @@ async function updateSourceStatus(
       updatedAt: new Date(),
     },
   })
-}
-
-/**
- * 获取已存在的 content_hash（用于去重）
- */
-async function getExistingHashes(sourceId: string): Promise<Set<string>> {
-  const existing = await prisma.$queryRaw<Array<{ content_hash: string }>>`
-    SELECT content_hash FROM document_chunks WHERE source_id = ${sourceId}::uuid
-  `
-  return new Set(existing.map(row => row.content_hash))
-}
-
-/**
- * 写入 chunks 到数据库
- */
-async function writeChunksToDb(
-  notebookId: string,
-  sourceId: string,
-  chunks: ChunkWithEmbedding[]
-): Promise<number> {
-  let inserted = 0
-
-  for (const chunk of chunks) {
-    await prisma.$executeRaw`
-      INSERT INTO document_chunks (
-        notebook_id, source_id, chunk_index, content, content_hash,
-        metadata, embedding, embedding_model, embedding_dim
-      ) VALUES (
-        ${notebookId}::uuid,
-        ${sourceId}::uuid,
-        ${chunk.chunkIndex},
-        ${chunk.content},
-        ${chunk.contentHash},
-        ${JSON.stringify(chunk.metadata)}::jsonb,
-        ${JSON.stringify(chunk.embedding)}::vector(1024),
-        'embedding-3',
-        ${EMBEDDING_DIM}
-      )
-      ON CONFLICT DO NOTHING
-    `
-    inserted++
-  }
-
-  return inserted
 }
 
 /**
@@ -194,7 +151,7 @@ export async function processPdfSource(sourceId: string): Promise<void> {
     await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
     const embedStart = Date.now()
     
-    const existingHashes = await getExistingHashes(sourceId)
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
     const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
       chunks,
       existingHashes
@@ -212,7 +169,11 @@ export async function processPdfSource(sourceId: string): Promise<void> {
     // 5. 写入数据库
     const indexStart = Date.now()
     
-    await writeChunksToDb(source.notebookId, sourceId, chunksWithEmbedding)
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
 
     log.stages.index = {
       status: 'success',
@@ -371,7 +332,7 @@ export async function processUrlSource(sourceId: string): Promise<void> {
     await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
     const embedStart = Date.now()
     
-    const existingHashes = await getExistingHashes(sourceId)
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
     const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
       chunks,
       existingHashes
@@ -389,7 +350,11 @@ export async function processUrlSource(sourceId: string): Promise<void> {
     // 5. 写入数据库
     const indexStart = Date.now()
     
-    await writeChunksToDb(source.notebookId, sourceId, chunksWithEmbedding)
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
 
     log.stages.index = {
       status: 'success',
@@ -464,10 +429,8 @@ export async function deleteSourceWithCleanup(sourceId: string): Promise<void> {
     return
   }
 
-  // 1. 删除 chunks
-  await prisma.$executeRaw`
-    DELETE FROM document_chunks WHERE source_id = ${sourceId}::uuid
-  `
+  // 1. 删除 chunks (使用封装层)
+  await vectorStore.deleteDocuments(sourceId)
 
   // 2. 删除 Storage 文件
   if (source.storagePath) {
