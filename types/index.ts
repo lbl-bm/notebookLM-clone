@@ -152,6 +152,18 @@ export interface ActionResponse {
 // Prompt 模板
 // ============================================
 
+export interface PromptTemplate {
+  id: string
+  ownerId: string
+  name: string
+  description?: string | null
+  template: string
+  variables: string[]
+  isSystem: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface PromptVariable {
   name: string
   description?: string

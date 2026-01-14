@@ -129,6 +129,12 @@ export async function getSourceContentSmart(
 
   // 3. 组装上下文
   const selectedChunks = allChunks.slice(0, MAX_TOTAL_CHUNKS)
+  
+  // 检查是否有有效内容
+  if (selectedChunks.length === 0 || totalChunksCount === 0) {
+    throw new Error('EMPTY_CONTENT:资料中没有可识别的文本内容。如果是 PDF 文件，可能是扫描版（图片）或加密文件，请上传包含可选择文字的 PDF。')
+  }
+  
   const content = selectedChunks.map((c, i) =>
     `### 来源 ${i + 1}: ${c.sourceTitle}\n${c.content}`
   ).join('\n\n---\n\n')

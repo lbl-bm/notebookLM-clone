@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { CheckCircle, XCircle, RotateCcw } from 'lucide-react'
@@ -13,11 +13,51 @@ import type { Quiz } from '@/lib/studio/parser'
 
 interface QuizViewerProps {
   quiz: Quiz
+  artifactId: string
 }
 
-export function QuizViewer({ quiz }: QuizViewerProps) {
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [showResults, setShowResults] = useState<Record<string, boolean>>({})
+export function QuizViewer({ quiz, artifactId }: QuizViewerProps) {
+  const storageKey = `quiz-progress-${artifactId}`
+
+  // 从 localStorage 恢复状态
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        const { answers } = JSON.parse(saved)
+        return answers || {}
+      }
+    } catch {}
+    return {}
+  })
+
+  const [showResults, setShowResults] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        const { showResults } = JSON.parse(saved)
+        return showResults || {}
+      }
+    } catch {}
+    return {}
+  })
+
+  // 自动保存到 localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({ answers, showResults })
+      )
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('保存测验进度失败:', error)
+      }
+    }
+  }, [answers, showResults, storageKey])
 
   // 计算得分
   const score = useMemo(() => {
@@ -46,6 +86,12 @@ export function QuizViewer({ quiz }: QuizViewerProps) {
   const handleReset = () => {
     setAnswers({})
     setShowResults({})
+    // 清除 localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(storageKey)
+      } catch {}
+    }
   }
 
   return (

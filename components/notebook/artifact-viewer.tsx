@@ -37,7 +37,7 @@ export function ArtifactViewer({ artifact }: ArtifactViewerProps) {
       if (!parsedContent) {
         return <ErrorView message="测验数据解析失败" />
       }
-      return <QuizViewer quiz={parsedContent as Quiz} />
+      return <QuizViewer quiz={parsedContent as Quiz} artifactId={artifact.id} />
 
     case 'mindmap':
       if (!parsedContent) {

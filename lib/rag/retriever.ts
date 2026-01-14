@@ -42,6 +42,8 @@ export interface RetrievalResult {
   chunks: RetrievedChunk[]
   hasEvidence: boolean
   retrievalMs: number
+  embeddingMs: number
+  queryEmbedding: number[]
 }
 
 /**
@@ -64,7 +66,9 @@ export async function retrieveChunks(params: {
   } = params
 
   // 1. 生成 query embedding
+  const embeddingStartTime = Date.now()
   const queryEmbedding = await getEmbedding(query)
+  const embeddingMs = Date.now() - embeddingStartTime
 
   // 验证维度
   if (queryEmbedding.length !== EMBEDDING_DIM) {
@@ -72,6 +76,7 @@ export async function retrieveChunks(params: {
   }
 
   // 2. 调用向量检索
+  const retrievalStartTime = Date.now()
   let chunks: Array<{
     id: bigint
     source_id: string
@@ -155,7 +160,9 @@ export async function retrieveChunks(params: {
   return {
     chunks: retrievedChunks,
     hasEvidence,
-    retrievalMs: Date.now() - startTime,
+    retrievalMs: Date.now() - retrievalStartTime,
+    embeddingMs,
+    queryEmbedding,
   }
 }
 

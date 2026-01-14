@@ -184,9 +184,6 @@ export async function withRetry<T>(
       
       if (isRetryable && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt] || RETRY_DELAYS[RETRY_DELAYS.length - 1]
-        console.warn(
-          `[${context?.operation || 'API'}] 重试 ${attempt + 1}/${MAX_RETRIES}，等待 ${delay}ms`
-        )
         await new Promise(resolve => setTimeout(resolve, delay))
       } else {
         throw lastError

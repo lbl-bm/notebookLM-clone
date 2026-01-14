@@ -77,18 +77,15 @@ export function safeParseJSON<T>(text: string, fallback: T): { data: T; success:
     // 1. 尝试直接解析
     return { data: JSON.parse(cleanText), success: true }
   } catch (e1) {
-    console.log('[JSON Parse] 直接解析失败，尝试提取 JSON...')
-    
     try {
       // 2. 尝试提取 JSON 块（处理 markdown 代码块包裹）
       const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (jsonMatch) {
         const extracted = jsonMatch[1].trim()
-        console.log('[JSON Parse] 从代码块提取:', extracted.slice(0, 100))
         return { data: JSON.parse(extracted), success: true }
       }
     } catch (e2) {
-      console.log('[JSON Parse] 代码块提取失败')
+      // 忽略错误，继续尝试下一种方法
     }
 
     try {
@@ -96,11 +93,10 @@ export function safeParseJSON<T>(text: string, fallback: T): { data: T; success:
       const objectMatch = text.match(/\{[\s\S]*\}/)
       if (objectMatch) {
         const extracted = objectMatch[0]
-        console.log('[JSON Parse] 从花括号提取:', extracted.slice(0, 100))
         return { data: JSON.parse(extracted), success: true }
       }
     } catch (e3) {
-      console.log('[JSON Parse] 花括号提取失败')
+      // 忽略错误，继续尝试下一种方法
     }
 
     try {
@@ -108,14 +104,16 @@ export function safeParseJSON<T>(text: string, fallback: T): { data: T; success:
       const arrayMatch = text.match(/\[[\s\S]*\]/)
       if (arrayMatch) {
         const extracted = arrayMatch[0]
-        console.log('[JSON Parse] 从方括号提取:', extracted.slice(0, 100))
         return { data: JSON.parse(extracted), success: true }
       }
     } catch (e4) {
-      console.log('[JSON Parse] 方括号提取失败')
+      // 忽略错误
     }
 
-    console.error('[JSON Parse] 所有解析方法都失败，原始内容:', text.slice(0, 500))
+    // 仅在开发环境记录解析失败
+    if (process.env.NODE_ENV === 'development') {
+      console.error('[JSON Parse] 所有解析方法都失败，原始内容:', text.slice(0, 500))
+    }
     return { data: fallback, success: false }
   }
 }

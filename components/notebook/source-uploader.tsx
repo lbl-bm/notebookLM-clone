@@ -103,6 +103,11 @@ export function AddSourceModal({
           f.uid === uid ? { ...f, status: 'done', percent: 100 } : f
         ))
 
+        // 上传成功后自动触发处理队列
+        fetch('/api/cron/process-queue?manual=true').catch(err => {
+          console.error('触发处理队列失败:', err)
+        })
+
         setTimeout(() => {
           setUploadingFiles(prev => prev.filter(f => f.uid !== uid))
           onSuccess?.()
@@ -177,6 +182,11 @@ export function AddSourceModal({
       // 成功后清空并关闭输入框
       setUrlValue('')
       setShowUrlInput(false)
+      
+      // 添加成功后自动触发处理队列
+      fetch('/api/cron/process-queue?manual=true').catch(err => {
+        console.error('触发处理队列失败:', err)
+      })
       
       // 如果有警告，显示一下
       if (data.warning) {

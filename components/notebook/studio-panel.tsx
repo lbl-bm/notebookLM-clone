@@ -6,13 +6,14 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { message } from 'antd'
+import { toast } from '@/hooks/use-toast'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StudioModeSelect } from './studio-mode-select'
 import { StudioActions, type ArtifactType } from './studio-actions'
 import { ArtifactList } from './artifact-list'
 import { ArtifactViewer } from './artifact-viewer'
+import { TemplateLibrary } from './template-library'
 import { useStudioMode } from '@/hooks/use-studio-mode'
 import type { Artifact } from './artifact-card'
 
@@ -28,6 +29,8 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatingType, setGeneratingType] = useState<ArtifactType>()
   const [isLoading, setIsLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'artifacts' | 'templates'>('artifacts')
+  const [elapsedTime, setElapsedTime] = useState(0)
 
   // 加载产物列表
   const loadArtifacts = useCallback(async () => {
@@ -54,6 +57,13 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
 
     setIsGenerating(true)
     setGeneratingType(type)
+    setElapsedTime(0)
+
+    // 启动计时器
+    const startTime = Date.now()
+    const interval = setInterval(() => {
+      setElapsedTime((Date.now() - startTime) / 1000)
+    }, 100)
 
     const typeLabels: Record<ArtifactType, string> = {
       summary: '摘要',
@@ -73,6 +83,8 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
         }),
       })
 
+      clearInterval(interval)
+
       const data = await response.json()
 
       if (!response.ok) {
@@ -91,15 +103,25 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
 
       // 显示统计信息
       const stats = data.stats
-      message.success(
-        `${typeLabels[type]}生成成功！耗时 ${(stats.duration / 1000).toFixed(1)}s`
-      )
+      toast({
+        title: `${typeLabels[type]}生成成功！`,
+        description: `耗时 ${(stats.duration / 1000).toFixed(1)}s`,
+      })
     } catch (error) {
-      console.error('生成失败:', error)
-      message.error((error as Error).message || '生成失败，请重试')
+      clearInterval(interval)
+      if (process.env.NODE_ENV === 'development') {
+        console.error('生成失败:', error)
+      }
+      toast({
+        title: '生成失败',
+        description: (error as Error).message || '请重试',
+        variant: 'destructive',
+      })
     } finally {
+      clearInterval(interval)
       setIsGenerating(false)
       setGeneratingType(undefined)
+      setElapsedTime(0)
     }
   }
 
@@ -118,16 +140,31 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
       if (selectedArtifact?.id === id) {
         setSelectedArtifact(null)
       }
-      message.success('已删除')
+      toast({
+        title: '已删除',
+      })
     } catch (error) {
       console.error('删除失败:', error)
-      message.error('删除失败')
+      toast({
+        title: '删除失败',
+        variant: 'destructive',
+      })
     }
   }
 
   // 选择产物
   const handleSelect = (artifact: Artifact) => {
     setSelectedArtifact(artifact)
+  }
+
+  // 更新产物标题
+  const handleTitleUpdate = (id: string, title: string) => {
+    setArtifacts((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, title } : a))
+    )
+    if (selectedArtifact?.id === id) {
+      setSelectedArtifact({ ...selectedArtifact, title })
+    }
   }
 
   // 返回列表
@@ -186,23 +223,62 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
         generatingType={generatingType}
         disabled={disabled}
         readySourceCount={readySourceCount}
+        elapsedTime={elapsedTime}
       />
 
       {/* 分隔线 */}
       <div className="border-t my-4" />
 
-      {/* 产物列表 */}
+      {/* 标签切换 */}
+      <div className="flex border-b mb-4">
+        <button
+          className={`flex-1 pb-2 text-sm font-medium transition-colors ${
+            activeTab === 'artifacts'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setActiveTab('artifacts')}
+        >
+          已生成产物
+        </button>
+        <button
+          className={`flex-1 pb-2 text-sm font-medium transition-colors ${
+            activeTab === 'templates'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setActiveTab('templates')}
+        >
+          模板库
+        </button>
+      </div>
+
+      {/* 内容区域 */}
       <div className="flex-1 overflow-auto">
-        <h3 className="text-sm font-medium mb-2">已生成的产物</h3>
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground text-center py-4">
-            加载中...
-          </p>
+        {activeTab === 'artifacts' ? (
+          <>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                加载中...
+              </p>
+            ) : (
+              <ArtifactList
+                artifacts={artifacts}
+                onDelete={handleDelete}
+                onSelect={handleSelect}
+                onTitleUpdate={handleTitleUpdate}
+              />
+            )}
+          </>
         ) : (
-          <ArtifactList
-            artifacts={artifacts}
-            onDelete={handleDelete}
-            onSelect={handleSelect}
+          <TemplateLibrary
+            notebookId={notebookId}
+            onArtifactGenerated={(artifact) => {
+              setArtifacts((prev) => [artifact, ...prev])
+              setSelectedArtifact(artifact)
+              setActiveTab('artifacts')
+            }}
+            disabled={disabled}
           />
         )}
       </div>

@@ -12,9 +12,10 @@ interface ArtifactListProps {
   artifacts: Artifact[]
   onDelete: (id: string) => void
   onSelect: (artifact: Artifact) => void
+  onTitleUpdate: (id: string, title: string) => void
 }
 
-export function ArtifactList({ artifacts, onDelete, onSelect }: ArtifactListProps) {
+export function ArtifactList({ artifacts, onDelete, onSelect, onTitleUpdate }: ArtifactListProps) {
   if (artifacts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -31,12 +32,14 @@ export function ArtifactList({ artifacts, onDelete, onSelect }: ArtifactListProp
 
   return (
     <div className="space-y-2">
-      {artifacts.map((artifact) => (
+      {artifacts.map((artifact, index) => (
         <ArtifactCard
           key={artifact.id}
           artifact={artifact}
+          index={index}
           onDelete={onDelete}
           onSelect={onSelect}
+          onTitleUpdate={onTitleUpdate}
         />
       ))}
     </div>

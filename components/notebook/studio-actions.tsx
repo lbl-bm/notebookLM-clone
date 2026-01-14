@@ -6,7 +6,12 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Tooltip } from 'antd'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { FileText, List, HelpCircle, Network, Loader2 } from 'lucide-react'
 
 export type ArtifactType = 'summary' | 'outline' | 'quiz' | 'mindmap'
@@ -17,6 +22,7 @@ interface StudioActionsProps {
   generatingType?: ArtifactType
   disabled: boolean
   readySourceCount: number
+  elapsedTime?: number
 }
 
 const actions: Array<{
@@ -57,6 +63,7 @@ export function StudioActions({
   generatingType,
   disabled,
   readySourceCount,
+  elapsedTime,
 }: StudioActionsProps) {
   return (
     <div className="space-y-2">
@@ -65,25 +72,35 @@ export function StudioActions({
         const isDisabled = disabled || (isGenerating && !isCurrentGenerating)
 
         return (
-          <Tooltip
-            key={type}
-            title={disabled ? '请先上传资料' : description}
-            placement="left"
-          >
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              disabled={isDisabled}
-              onClick={() => onGenerate(type)}
-            >
-              {isCurrentGenerating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                icon
-              )}
-              <span>{isCurrentGenerating ? '生成中...' : label}</span>
-            </Button>
-          </Tooltip>
+          <TooltipProvider key={type}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-2"
+                  disabled={isDisabled}
+                  onClick={() => onGenerate(type)}
+                >
+                  {isCurrentGenerating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    icon
+                  )}
+                  <span className="flex-1 text-left">
+                    {isCurrentGenerating ? '生成中...' : label}
+                  </span>
+                  {isCurrentGenerating && elapsedTime !== undefined && (
+                    <span className="text-xs text-muted-foreground">
+                      {Math.floor(elapsedTime)}s
+                    </span>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                <p>{disabled ? '请先上传资料' : description}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )
       })}
 

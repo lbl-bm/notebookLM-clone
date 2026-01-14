@@ -48,8 +48,6 @@ async function callLLM(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    console.log(`[LLM] 调用 API，模型: ${zhipuConfig.studioModel}，prompt 长度: ${prompt.length}`)
-    
     const response = await fetch(`${zhipuConfig.baseUrl}/paas/v4/chat/completions`, {
       method: 'POST',
       headers: {
@@ -74,18 +72,12 @@ async function callLLM(
 
     const data = await response.json()
     
-    // 检查是否因为 token 限制被截断
-    const finishReason = data.choices[0]?.finish_reason
-    if (finishReason === 'length') {
-      console.warn('[LLM] 输出被截断 (finish_reason: length)，可能需要增加 max_tokens')
-    }
-    
     // 优先使用 content，如果为空则尝试从 reasoning_content 提取（针对推理模型）
+    const finishReason = data.choices[0]?.finish_reason
     let content = data.choices[0]?.message?.content || ''
     
     // 如果 content 为空但有 reasoning_content，尝试从中提取 JSON
     if (!content && data.choices[0]?.message?.reasoning_content) {
-      console.log('[LLM] content 为空，尝试从 reasoning_content 提取...')
       const reasoning = data.choices[0].message.reasoning_content
       
       // 尝试从推理内容中提取 JSON
@@ -94,13 +86,11 @@ async function callLLM(
                         reasoning.match(/\{[\s\S]*"questions"[\s\S]*\}/)
       if (jsonMatch) {
         content = jsonMatch[1] || jsonMatch[0]
-        console.log('[LLM] 从 reasoning_content 提取到内容')
       }
     }
     
-    console.log(`[LLM] 响应成功，内容长度: ${content.length}，finish_reason: ${finishReason}`)
-    
-    if (!content) {
+    // 仅在开发环境记录空响应
+    if (!content && process.env.NODE_ENV === 'development') {
       console.error('[LLM] 返回内容为空，完整响应:', JSON.stringify(data))
     }
     
@@ -133,9 +123,6 @@ async function generateFast(
   // 调用 LLM
   const rawContent = await callLLM(prompt, TIMEOUT_FAST)
 
-  // 添加调试日志
-  console.log(`[Studio] LLM 返回内容 (${type}):`, rawContent.slice(0, 500))
-
   // 处理结果
   let content = rawContent
   let parseSuccess = true
@@ -144,14 +131,14 @@ async function generateFast(
     const { quiz, success } = parseQuiz(rawContent)
     content = JSON.stringify(quiz)
     parseSuccess = success
-    if (!success) {
+    if (!success && process.env.NODE_ENV === 'development') {
       console.error(`[Studio] Quiz 解析失败，原始内容:`, rawContent)
     }
   } else if (type === 'mindmap') {
     const { mindmap, success } = parseMindMap(rawContent)
     content = JSON.stringify(mindmap)
     parseSuccess = success
-    if (!success) {
+    if (!success && process.env.NODE_ENV === 'development') {
       console.error(`[Studio] MindMap 解析失败，原始内容:`, rawContent)
     }
   }
@@ -194,7 +181,9 @@ async function generatePrecise(
       const result = await callLLM(mapPrompt, TIMEOUT_MAP_STEP)
       intermediateResults.push(`## ${source.sourceTitle}\n${result}`)
     } catch (error) {
-      console.error(`[Map] Source ${source.sourceTitle} 处理失败:`, error)
+      if (process.env.NODE_ENV === 'development') {
+        console.error(`[Map] Source ${source.sourceTitle} 处理失败:`, error)
+      }
       // 继续处理其他 source
     }
   }
@@ -248,8 +237,6 @@ export async function generateArtifact(params: {
 }): Promise<GenerateResult> {
   const { notebookId, type, mode, sourceIds } = params
 
-  console.log(`[Studio] 开始生成 ${type}，模式: ${mode}`)
-
   try {
     if (mode === 'precise') {
       return await generatePrecise(notebookId, type, sourceIds)
@@ -257,7 +244,57 @@ export async function generateArtifact(params: {
       return await generateFast(notebookId, type, sourceIds)
     }
   } catch (error) {
-    console.error(`[Studio] 生成失败:`, error)
+    if (process.env.NODE_ENV === 'development') {
+      console.error(`[Studio] 生成失败:`, error)
+    }
     throw error
+  }
+}
+
+/**
+ * 基于模板生成产物
+ */
+export async function generateFromTemplate(params: {
+  notebookId: string
+  template: string
+  variables: Record<string, string>
+  sourceIds?: string[]
+}): Promise<GenerateResult> {
+  const { notebookId, template, variables, sourceIds } = params
+  const startTime = Date.now()
+
+  // 1. 获取上下文（如果模板包含 {{context}}）
+  let finalPrompt = template
+  let stats: ContentStats = {
+    totalChunks: 0,
+    usedChunks: 0,
+    estimatedTokens: 0,
+    sourceCount: 0,
+  }
+
+  if (template.includes('{{context}}')) {
+    const { content: context, stats: contextStats } = await getSourceContentSmart(notebookId, sourceIds)
+    finalPrompt = finalPrompt.replaceAll('{{context}}', context)
+    stats = contextStats
+  }
+
+  // 2. 替换其他变量
+  for (const [key, value] of Object.entries(variables)) {
+    if (key === 'context') continue // 已经处理过了
+    const placeholder = `{{${key}}}`
+    finalPrompt = finalPrompt.replaceAll(placeholder, value)
+  }
+
+  // 3. 调用 LLM
+  const content = await callLLM(finalPrompt, TIMEOUT_PRECISE)
+
+  return {
+    content,
+    stats: {
+      ...stats,
+      mode: 'precise',
+      strategy: 'template',
+      duration: Date.now() - startTime,
+    },
   }
 }

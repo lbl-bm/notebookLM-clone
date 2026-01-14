@@ -75,6 +75,30 @@ export async function POST(request: Request) {
     const chunks = deduplicateChunks(retrievalResult.chunks)
     const citations = buildCitations(chunks)
 
+    // 构造检索详情
+    const retrievalDetails = {
+      query: userQuestion,
+      queryEmbedding: retrievalResult.queryEmbedding,
+      retrievalParams: {
+        sourceIds: selectedSourceIds || [],
+        topK: 8,
+        threshold: 0.3,
+      },
+      model: zhipuConfig.chatModel,
+      chunks: retrievalResult.chunks.map(c => ({
+        id: c.id,
+        sourceId: c.sourceId,
+        sourceName: c.sourceTitle,
+        score: c.similarity,
+        content: c.content,
+        metadata: c.metadata,
+      })),
+      timing: {
+        embedding: retrievalResult.embeddingMs,
+        retrieval: retrievalResult.retrievalMs,
+      }
+    }
+
     // 2. 判断是否有依据
     if (!retrievalResult.hasEvidence) {
       // 无依据，直接返回固定回复
@@ -87,10 +111,12 @@ export async function POST(request: Request) {
           citations: [],
           metadata: {
             retrievalMs: retrievalResult.retrievalMs,
+            embeddingMs: retrievalResult.embeddingMs,
             generationMs: 0,
             model: 'none',
             topK: chunks.length,
             chunkCount: 0,
+            retrievalDetails,
           },
         },
       })
@@ -99,6 +125,7 @@ export async function POST(request: Request) {
         content: NO_EVIDENCE_RESPONSE,
         citations: [],
         answerMode: 'no_evidence',
+        retrievalDetails,
       }), {
         headers: { 'Content-Type': 'application/json' },
       })
@@ -149,12 +176,23 @@ export async function POST(request: Request) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6)
             if (data === '[DONE]') {
-              // 流结束，追加 citations
-              const citationsData = JSON.stringify({ citations, answerMode: 'grounded' })
+              // 流结束，追加 citations 和检索详情
+              const generationMs = Date.now() - startTime - retrievalResult.retrievalMs - retrievalResult.embeddingMs
+              const citationsData = JSON.stringify({ 
+                citations, 
+                answerMode: 'grounded',
+                retrievalDetails: {
+                  ...retrievalDetails,
+                  timing: {
+                    ...retrievalDetails.timing,
+                    generation: generationMs,
+                    total: Date.now() - startTime
+                  }
+                }
+              })
               controller.enqueue(encoder.encode(`\n\n__CITATIONS__${citationsData}__CITATIONS_END__`))
               
               // 保存 AI 回复
-              const generationMs = Date.now() - startTime - retrievalResult.retrievalMs
               await prisma.message.create({
                 data: {
                   notebookId,
@@ -164,10 +202,19 @@ export async function POST(request: Request) {
                   citations: citations as unknown as Prisma.InputJsonValue,
                   metadata: {
                     retrievalMs: retrievalResult.retrievalMs,
+                    embeddingMs: retrievalResult.embeddingMs,
                     generationMs,
                     model: zhipuConfig.chatModel,
                     topK: chunks.length,
                     chunkCount: chunks.length,
+                    retrievalDetails: {
+                      ...retrievalDetails,
+                      timing: {
+                        ...retrievalDetails.timing,
+                        generation: generationMs,
+                        total: Date.now() - startTime
+                      }
+                    },
                   },
                 },
               })

@@ -59,7 +59,22 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 5. 生成产物
+    // 5. 检查产物数量限制（最多 10 个）
+    const artifactCount = await prisma.artifact.count({
+      where: { notebookId },
+    })
+
+    if (artifactCount >= 10) {
+      return NextResponse.json(
+        { 
+          error: '产物数量已达上限（10个），请删除旧产物后重试', 
+          code: 'LIMIT_EXCEEDED' 
+        },
+        { status: 400 }
+      )
+    }
+
+    // 6. 生成产物
     const result = await generateArtifact({
       notebookId,
       type,
@@ -67,7 +82,7 @@ export async function POST(request: NextRequest) {
       sourceIds,
     })
 
-    // 6. 保存到数据库
+    // 7. 保存到数据库
     const artifact = await prisma.artifact.create({
       data: {
         notebookId,
@@ -80,7 +95,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // 7. 返回结果
+    // 8. 返回结果
     return NextResponse.json({
       artifact: {
         id: artifact.id,
