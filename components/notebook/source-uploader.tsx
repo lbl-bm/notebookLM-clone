@@ -311,7 +311,7 @@ export function AddSourceModal({
 
           {/* 上传区域 - 居中显示，限制最大宽度 */}
           <div className="flex justify-center">
-            <div className="w-full max-w-md">
+            <div className="max-w-md">
               <Attachments
                 ref={attachmentsRef}
                 beforeUpload={handleUpload}

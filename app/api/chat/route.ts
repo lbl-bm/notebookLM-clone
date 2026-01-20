@@ -8,7 +8,7 @@
 import { prisma } from '@/lib/db/prisma'
 import { Prisma } from '@prisma/client'
 import { getCurrentUserId } from '@/lib/db/supabase'
-import { zhipuConfig } from '@/lib/config'
+import { zhipuConfig, getModelConfig, type ModelProvider } from '@/lib/config'
 import {
   retrieveChunks,
   hybridRetrieveChunks,
@@ -33,7 +33,10 @@ export async function POST(request: Request) {
       return new Response('未登录', { status: 401 })
     }
 
-    const { messages, notebookId, selectedSourceIds } = body
+    const { messages, notebookId, selectedSourceIds, mode = 'fast' } = body
+    
+    // 获取对应模式的模型配置
+    const modelConfig = getModelConfig(mode)
 
     if (!notebookId) {
       return new Response('缺少 notebookId', { status: 400 })
@@ -103,7 +106,7 @@ export async function POST(request: Request) {
         useHybridSearch,
         retrievalType: retrievalResult.retrievalType || 'vector',
       },
-      model: zhipuConfig.chatModel,
+      model: modelConfig.model,
       chunks: retrievalResult.chunks.map(c => ({
         id: c.id,
         sourceId: c.sourceId,
@@ -163,15 +166,15 @@ export async function POST(request: Request) {
       chatHistory,
     })
 
-    // 4. 调用智谱 API 流式生成
-    const response = await fetch(`${zhipuConfig.baseUrl}/paas/v4/chat/completions`, {
+    // 4. 调用 API 流式生成
+    const response = await fetch(`${modelConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${zhipuConfig.apiKey}`,
+        'Authorization': `Bearer ${modelConfig.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: zhipuConfig.chatModel,
+        model: modelConfig.model,
         messages: promptMessages,
         stream: true,
       }),
@@ -224,7 +227,7 @@ export async function POST(request: Request) {
                     retrievalMs: retrievalResult.retrievalMs,
                     embeddingMs: retrievalResult.embeddingMs,
                     generationMs,
-                    model: zhipuConfig.chatModel,
+                    model: modelConfig.model,
                     topK: chunks.length,
                     chunkCount: chunks.length,
                     retrievalDetails: {

@@ -3,6 +3,7 @@
 .vscode/settings.json
 .idea/
 .trae/
+.qoder/
 *.swp
 *.swo
 *~

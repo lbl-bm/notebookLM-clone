@@ -11,7 +11,7 @@ import { Bubble, Sender } from '@ant-design/x'
 import { XMarkdown } from '@ant-design/x-markdown'
 import type { BubbleItemType } from '@ant-design/x'
 import { Card } from '@/components/ui/card'
-import { MessageSquare, FileText, Globe, User, Bot, AlertCircle } from 'lucide-react'
+import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target } from 'lucide-react'
 import { Avatar, Tooltip, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
 import dynamic from 'next/dynamic'
@@ -23,6 +23,14 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Search } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { availableModels } from '@/lib/config'
 
 // 引入 markdown 样式
 import '@ant-design/x-markdown/es/XMarkdown/index.css'
@@ -55,7 +63,42 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [currentCitations, setCurrentCitations] = useState<Citation[]>([])
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const { selectCitationByIndex, setCitations } = useCitation()
+  const [chatMode, setChatModeState] = useState<'fast' | 'precise'>('fast')
+  const setChatMode = useCallback((value: 'fast' | 'precise') => {
+    setChatModeState(value)
+    localStorage.setItem('chat-model', value)
+  }, [])
+
+  useEffect(() => {
+    const stored = localStorage.getItem('chat-model')
+    if (stored === 'fast' || stored === 'precise') {
+      setChatModeState(stored)
+    }
+  }, [])
+
+  // 加载建议问题
+  useEffect(() => {
+    // 只有在没有消息时才加载建议问题
+    if (messages.length > 0) return
+
+    const fetchSuggestions = async () => {
+      try {
+        const res = await fetch(`/api/notebooks/${notebookId}/suggest`, {
+          method: 'POST',
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setSuggestedQuestions(data.questions || [])
+        }
+      } catch (error) {
+        console.error('Failed to fetch suggestions:', error)
+      }
+    }
+
+    fetchSuggestions()
+  }, [notebookId, messages.length])
 
   // 当 currentCitations 变化时，更新 context
   useEffect(() => {
@@ -160,6 +203,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
           })),
           notebookId,
           selectedSourceIds,
+          mode: chatMode,
         }),
       })
 
@@ -244,7 +288,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, notebookId, selectedSourceIds])
+  }, [isLoading, messages, notebookId, selectedSourceIds, chatMode])
 
   // Markdown 渲染器 - 支持内联引用标记
   const renderMarkdown = useCallback((content: string, citations?: Citation[]) => {
@@ -305,7 +349,10 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       {/* 消息列表 - 固定高度，内部滚动 */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {messages.length === 0 ? (
-          <EmptyState />
+          <EmptyState 
+            suggestedQuestions={suggestedQuestions} 
+            onQuestionClick={handleSubmit} 
+          />
         ) : (
           <Bubble.List
             ref={listRef}
@@ -330,6 +377,13 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       {/* 输入框 */}
       <div className="flex-shrink-0 border-t p-4 bg-slate-50 dark:bg-slate-900/50">
         <div className="max-w-3xl mx-auto">
+          <div className="flex items-center justify-end mb-2">
+            <ModelSelector
+              value={chatMode}
+              onChange={(value) => setChatMode(value as 'fast' | 'precise')}
+              disabled={isLoading}
+            />
+          </div>
           <Sender
             value={input}
             onChange={setInput}
@@ -348,19 +402,66 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   )
 }
 
+function ModelSelector({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <div className="w-[160px]">
+      <Select value={value} onValueChange={onChange} disabled={!!disabled}>
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue placeholder="选择模型" />
+        </SelectTrigger>
+        <SelectContent>
+          {availableModels.map((model) => (
+            <SelectItem key={model.id} value={model.id}>
+              <span className="flex items-center gap-1">
+                {model.icon === 'zap' ? (
+                  <Zap className="h-3 w-3 text-yellow-500" />
+                ) : (
+                  <Target className="h-3 w-3 text-blue-500" />
+                )}
+                {model.displayName}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 /**
  * 空状态
  */
-function EmptyState() {
+function EmptyState({ 
+  suggestedQuestions = [], 
+  onQuestionClick 
+}: { 
+  suggestedQuestions?: string[]
+  onQuestionClick: (q: string) => void
+}) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center p-4">
       <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
         <MessageSquare className="w-8 h-8 text-slate-400" />
       </div>
       <h3 className="text-lg font-medium mb-2 text-slate-900 dark:text-slate-50">开始对话</h3>
-      <p className="text-slate-500 max-w-sm">
+      <p className="text-slate-500 max-w-sm mb-8">
         添加资料后，你可以向 AI 提问关于这些资料的任何问题
       </p>
+
+      {/* 建议问题 */}
+      {suggestedQuestions.length > 0 && (
+        <div className="flex flex-col gap-2 max-w-md w-full">
+          {suggestedQuestions.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => onQuestionClick(q)}
+              className="text-sm text-left px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-sm"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
