@@ -2,6 +2,7 @@
 .bmad-core
 .vscode/settings.json
 .idea/
+.trae/
 *.swp
 *.swo
 *~

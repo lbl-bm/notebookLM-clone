@@ -25,6 +25,7 @@ import {
   Youtube,
   Globe,
   AlertCircle,
+  Type,
 } from 'lucide-react'
 import { SourceSearchBox } from './add-source-dialog'
 
@@ -71,6 +72,14 @@ export function AddSourceModal({
   const [urlValue, setUrlValue] = useState('')
   const [urlLoading, setUrlLoading] = useState(false)
   const [urlError, setUrlError] = useState('')
+
+  // 文字输入状态
+  const [showTextInput, setShowTextInput] = useState(false)
+  const [textTitle, setTextTitle] = useState('')
+  const [textContent, setTextContent] = useState('')
+  const [textLoading, setTextLoading] = useState(false)
+  const [textError, setTextError] = useState('')
+  const [textCharCount, setTextCharCount] = useState(0)
 
   const handleUpload = (file: FileType) => {
     const uid = file.uid || crypto.randomUUID()
@@ -206,7 +215,75 @@ export function AddSourceModal({
     e.stopPropagation()
     e.preventDefault()
     setShowUrlInput(true)
+    setShowTextInput(false)
     setUrlError('')
+  }
+
+  const handleTextClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setShowTextInput(true)
+    setShowUrlInput(false)
+    setTextError('')
+  }
+
+  // 处理添加文字
+  const handleAddText = async () => {
+    const title = textTitle.trim()
+    const content = textContent.trim()
+
+    if (!title) {
+      setTextError('请输入标题')
+      return
+    }
+
+    if (content.length < 10) {
+      setTextError('文字内容至少需要 10 个字符')
+      return
+    }
+
+    if (content.length > 50000) {
+      setTextError('文字内容不能超过 50000 字符')
+      return
+    }
+
+    setTextError('')
+    setTextLoading(true)
+
+    try {
+      const response = await fetch('/api/sources/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          title,
+          content,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '添加失败')
+      }
+
+      // 成功后清空并关闭输入框
+      setTextTitle('')
+      setTextContent('')
+      setTextCharCount(0)
+      setShowTextInput(false)
+
+      // 添加成功后自动触发处理队列
+      fetch('/api/cron/process-queue?manual=true').catch(err => {
+        console.error('触发处理队列失败:', err)
+      })
+
+      onSuccess?.()
+    } catch (err) {
+      setTextError((err as Error).message)
+    } finally {
+      setTextLoading(false)
+    }
   }
 
   const progress = Math.round((currentSourceCount / maxSourceCount) * 100)
@@ -284,10 +361,10 @@ export function AddSourceModal({
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                      disabled
+                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      onClick={handleTextClick}
                     >
-                      <FileText className="h-4 w-4" />
+                      <Type className="h-4 w-4" />
                       复制的文字
                     </Button>
                   </div>
@@ -345,6 +422,78 @@ export function AddSourceModal({
                     <p className="text-xs text-amber-600 dark:text-amber-400">{urlError}</p>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 文字输入区域 */}
+          {showTextInput && (
+            <div className="flex justify-center">
+              <div className="w-full max-w-md space-y-3">
+                <div className="flex gap-2 items-center">
+                  <Input
+                    placeholder="为这段文字起个标题"
+                    value={textTitle}
+                    onChange={(e) => {
+                      setTextTitle(e.target.value)
+                      setTextError('')
+                    }}
+                    className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                    autoFocus
+                  />
+                </div>
+                <div className="relative">
+                  <textarea
+                    placeholder="粘贴你复制的文字内容..."
+                    value={textContent}
+                    onChange={(e) => {
+                      setTextContent(e.target.value)
+                      setTextCharCount(e.target.value.length)
+                      setTextError('')
+                    }}
+                    className="w-full h-40 p-3 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="absolute bottom-2 right-2 text-xs text-slate-400">
+                    {textCharCount}/50000
+                  </span>
+                </div>
+                {textError && (
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-600 dark:text-amber-400">{textError}</p>
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowTextInput(false)
+                      setTextTitle('')
+                      setTextContent('')
+                      setTextCharCount(0)
+                      setTextError('')
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleAddText}
+                    disabled={!textContent.trim() || textLoading || textCharCount < 10}
+                    className="h-9 px-4"
+                  >
+                    {textLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        添加中...
+                      </>
+                    ) : (
+                      '添加'
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
           )}

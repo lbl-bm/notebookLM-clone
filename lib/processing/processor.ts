@@ -412,8 +412,116 @@ export async function processSource(sourceId: string): Promise<void> {
     await processPdfSource(sourceId)
   } else if (source.type === 'url') {
     await processUrlSource(sourceId)
+  } else if (source.type === 'text') {
+    await processTextSource(sourceId)
   } else {
     throw new Error(`不支持的 Source 类型: ${source.type}`)
+  }
+}
+
+/**
+ * 处理复制的文字
+ * 状态流转：pending → chunking → embedding → ready
+ */
+export async function processTextSource(sourceId: string): Promise<void> {
+  const startTime = Date.now()
+  const log: ProcessingLog = { stages: {} }
+
+  try {
+    // 获取 Source 信息
+    const source = await prisma.source.findUnique({
+      where: { id: sourceId },
+      include: { notebook: true },
+    })
+
+    if (!source) {
+      throw new Error('Source 不存在')
+    }
+
+    // 从 meta 中获取文字内容
+    const meta = source.meta as { content?: string; charCount?: number; wordCount?: number } | null
+    const content = meta?.content
+
+    if (!content) {
+      throw new Error('文字内容不存在')
+    }
+
+    // 1. 切分阶段（跳过下载和解析）
+    await updateSourceStatus(sourceId, 'chunking', { processingLog: log })
+    const chunkStart = Date.now()
+    
+    const chunks = textSplitter.splitText(content, source.title, 'text')
+
+    const avgTokens = chunks.length > 0
+      ? Math.round(chunks.reduce((sum, c) => sum + c.metadata.tokenCount, 0) / chunks.length)
+      : 0
+
+    log.stages.chunk = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - chunkStart,
+      chunks: chunks.length,
+      avgTokens,
+      wordCount: meta?.wordCount || 0,
+    }
+
+    // 2. 向量化阶段
+    await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
+    const embedStart = Date.now()
+    
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
+    const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
+      chunks,
+      existingHashes
+    )
+
+    log.stages.embed = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - embedStart,
+      success: chunksWithEmbedding.length,
+      failed: skipped,
+      tokensUsed,
+    }
+
+    // 3. 写入数据库
+    const indexStart = Date.now()
+    
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
+
+    log.stages.index = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - indexStart,
+    }
+
+    // 完成
+    log.totalDuration = Date.now() - startTime
+
+    await updateSourceStatus(sourceId, 'ready', {
+      processingLog: log,
+      meta: {
+        ...(source.meta as object || {}),
+        charCount: content.length,
+        chunkCount: chunksWithEmbedding.length,
+        wordCount: meta?.wordCount || content.split(/\s+/).filter(Boolean).length,
+      },
+    })
+
+  } catch (error) {
+    const err = error as Error
+    log.totalDuration = Date.now() - startTime
+
+    await updateSourceStatus(sourceId, 'failed', {
+      errorMessage: err.message,
+      processingLog: log,
+    })
+
+    throw err
   }
 }
 

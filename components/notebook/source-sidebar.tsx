@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
@@ -58,22 +58,22 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
     setSources(initialSources)
   }, [initialSources])
 
-  const handleAddSuccess = () => {
+  const handleAddSuccess = useCallback(() => {
     toast({
       title: '添加成功',
       description: '来源已添加，正在处理中...',
     })
     router.refresh()
-  }
+  }, [toast, router])
 
-  const handleModalSuccess = () => {
+  const handleModalSuccess = useCallback(() => {
     setShowModal(false)
     handleAddSuccess()
-  }
+  }, [handleAddSuccess])
 
-  const handleSourceDelete = () => {
+  const handleSourceDelete = useCallback(() => {
     router.refresh()
-  }
+  }, [router])
 
   // 如果有选中的引用，显示引用详情视图
   if (selectedCitation) {

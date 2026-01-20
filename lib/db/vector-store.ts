@@ -42,6 +42,27 @@ export interface VectorStore {
     similarity: number
   }>>
 
+  hybridSearch(params: {
+    notebookId: string
+    queryEmbedding: number[]
+    queryText: string
+    topK?: number
+    threshold?: number
+    sourceIds?: string[]
+    vectorWeight?: number
+    ftsWeight?: number
+  }): Promise<Array<{
+    id: string
+    sourceId: string
+    chunkIndex: number
+    content: string
+    metadata: ChunkMetadata
+    similarity: number
+    vectorScore: number
+    ftsScore: number
+    combinedScore: number
+  }>>
+
   deleteDocuments(sourceId: string): Promise<void>
   getExistingHashes(sourceId: string): Promise<Set<string>>
 }
@@ -186,6 +207,123 @@ export class PrismaVectorStore implements VectorStore {
       SELECT content_hash FROM document_chunks WHERE source_id = ${sourceId}::uuid
     `
     return new Set(existing.map(row => row.content_hash))
+  }
+
+  async hybridSearch(params: {
+    notebookId: string
+    queryEmbedding: number[]
+    queryText: string
+    topK?: number
+    threshold?: number
+    sourceIds?: string[]
+    vectorWeight?: number
+    ftsWeight?: number
+  }): Promise<Array<{
+    id: string
+    sourceId: string
+    chunkIndex: number
+    content: string
+    metadata: ChunkMetadata
+    similarity: number
+    vectorScore: number
+    ftsScore: number
+    combinedScore: number
+  }>> {
+    const {
+      notebookId,
+      queryEmbedding,
+      queryText,
+      topK = 8,
+      threshold = 0.1,
+      sourceIds,
+      vectorWeight = 0.7,
+      ftsWeight = 0.3,
+    } = params
+
+    if (queryEmbedding.length !== EMBEDDING_DIM) {
+      throw new Error(
+        `[VectorStore] Query embedding 维度错误: 期望 ${EMBEDDING_DIM}, 实际 ${queryEmbedding.length}`
+      )
+    }
+
+    let results: Array<{
+      id: bigint
+      source_id: string
+      chunk_index: number
+      content: string
+      metadata: ChunkMetadata
+      similarity: number
+      vector_score: number
+      fts_score: number
+      combined_score: number
+    }>
+
+    if (sourceIds && sourceIds.length > 0) {
+      results = await prisma.$queryRaw`
+        SELECT
+          c.id,
+          c.source_id,
+          c.chunk_index,
+          c.content,
+          c.metadata,
+          1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) AS similarity,
+          COALESCE(vr.vector_score, 0) AS vector_score,
+          COALESCE(fr.fts_score, 0) AS fts_score,
+          COALESCE(vr.vector_score, 0) * ${vectorWeight} + COALESCE(fr.fts_score, 0) * ${ftsWeight} AS combined_score
+        FROM document_chunks c
+        LEFT JOIN LATERAL (
+          SELECT 1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) AS vector_score
+        ) vr ON true
+        LEFT JOIN LATERAL (
+          SELECT ts_rank(c.content_tsv, plainto_tsquery('simple', ${queryText})) AS fts_score
+          WHERE c.content_tsv @@ plainto_tsquery('simple', ${queryText})
+        ) fr ON true
+        WHERE c.notebook_id = ${notebookId}::uuid
+          AND c.source_id = ANY(${sourceIds}::uuid[])
+          AND (1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) > ${threshold}
+               OR c.content_tsv @@ plainto_tsquery('simple', ${queryText}))
+        ORDER BY combined_score DESC
+        LIMIT ${topK}
+      `
+    } else {
+      results = await prisma.$queryRaw`
+        SELECT
+          c.id,
+          c.source_id,
+          c.chunk_index,
+          c.content,
+          c.metadata,
+          1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) AS similarity,
+          COALESCE(vr.vector_score, 0) AS vector_score,
+          COALESCE(fr.fts_score, 0) AS fts_score,
+          COALESCE(vr.vector_score, 0) * ${vectorWeight} + COALESCE(fr.fts_score, 0) * ${ftsWeight} AS combined_score
+        FROM document_chunks c
+        LEFT JOIN LATERAL (
+          SELECT 1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) AS vector_score
+        ) vr ON true
+        LEFT JOIN LATERAL (
+          SELECT ts_rank(c.content_tsv, plainto_tsquery('english', ${queryText})) AS fts_score
+          WHERE c.content_tsv @@ plainto_tsquery('english', ${queryText})
+        ) fr ON true
+        WHERE c.notebook_id = ${notebookId}::uuid
+          AND (1 - (c.embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1024)) > ${threshold}
+               OR c.content_tsv @@ plainto_tsquery('english', ${queryText}))
+        ORDER BY combined_score DESC
+        LIMIT ${topK}
+      `
+    }
+
+    return results.map(row => ({
+      id: row.id.toString(),
+      sourceId: row.source_id,
+      chunkIndex: row.chunk_index,
+      content: row.content,
+      metadata: row.metadata as ChunkMetadata,
+      similarity: row.similarity,
+      vectorScore: row.vector_score,
+      ftsScore: row.fts_score,
+      combinedScore: row.combined_score,
+    }))
   }
 }
 

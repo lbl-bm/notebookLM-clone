@@ -54,8 +54,14 @@ export function StudioModeSelect({ value, onChange, disabled }: StudioModeSelect
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end">
           <div className="text-xs space-y-1">
-            <p><strong>⚡ 快速模式</strong>：智能采样，5-15秒</p>
-            <p><strong>🎯 精准模式</strong>：Map-Reduce，30-90秒</p>
+            <p className="flex items-center gap-1">
+              <Zap className="h-3 w-3 text-yellow-500" />
+              <strong>快速模式</strong>：智能采样，5-15秒
+            </p>
+            <p className="flex items-center gap-1">
+              <Target className="h-3 w-3 text-blue-500" />
+              <strong>精准模式</strong>：Map-Reduce，30-90秒
+            </p>
           </div>
         </TooltipContent>
       </Tooltip>

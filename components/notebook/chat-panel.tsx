@@ -14,7 +14,7 @@ import { Card } from '@/components/ui/card'
 import { MessageSquare, FileText, Globe, User, Bot, AlertCircle } from 'lucide-react'
 import { Avatar, Tooltip, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
-import { RetrievalDetailsPanel } from './retrieval-details-panel'
+import dynamic from 'next/dynamic'
 import {
   Sheet,
   SheetContent,
@@ -26,6 +26,12 @@ import { Search } from 'lucide-react'
 
 // 引入 markdown 样式
 import '@ant-design/x-markdown/es/XMarkdown/index.css'
+
+// 动态导入 RetrievalDetailsPanel (bundle-dynamic-imports)
+const RetrievalDetailsPanel = dynamic(
+  () => import('./retrieval-details-panel').then(mod => mod.RetrievalDetailsPanel),
+  { loading: () => <div className="p-4 text-sm text-muted-foreground">加载详情中...</div> }
+)
 
 interface Message {
   id: string
@@ -59,8 +65,8 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     }
   }, [currentCitations, setCitations])
 
-  // 转换为 Bubble.List 的 items 格式
-  const bubbleItems: BubbleItemType[] = messages.map((msg) => {
+  // 转换为 Bubble.List 的 items 格式 (rerender-memo)
+  const bubbleItems: BubbleItemType[] = useMemo(() => messages.map((msg) => {
     // 判断是否为无依据回复
     const isNoEvidence = msg.answerMode === 'no_evidence'
     const citations = msg.citations as Citation[] | undefined
@@ -109,7 +115,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       loading: msg.role === 'assistant' && !msg.content && isLoading,
       footer,
     }
-  })
+  }), [messages, isLoading])
 
   // 自动滚动到底部
   useEffect(() => {
@@ -256,25 +262,26 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     )
   }, [selectCitationByIndex])
 
-  // 角色配置
-  const roles = {
+  // 角色配置 (rerender-memo)
+  const roles = useMemo(() => ({
     user: {
       placement: 'end' as const,
       variant: 'filled' as const,
-      avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: '#1677ff' }} />,
+      avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: 'hsl(var(--muted))', color: 'hsl(var(--foreground))' }} />,
       styles: {
         content: {
-          backgroundColor: '#1677ff',
-          color: 'white',
+          backgroundColor: 'hsl(var(--muted))',
+          color: 'hsl(var(--foreground))',
           padding: '12px 16px',
-          borderRadius: '16px',
+          borderRadius: '12px',
+          boxShadow: 'none',
         },
       },
     },
     ai: {
       placement: 'start' as const,
       variant: 'outlined' as const,
-      avatar: <Avatar icon={<Bot size={16} />} style={{ backgroundColor: '#f5f5f5', color: '#666' }} />,
+      avatar: <Avatar icon={<Bot size={16} />} style={{ backgroundColor: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }} />,
       contentRender: (content: string, info: { key?: string | number }) => {
         // 找到对应的消息获取 citations
         const msg = messages.find(m => m.id === info.key)
@@ -282,15 +289,16 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       },
       styles: {
         content: {
-          backgroundColor: '#fafafa',
-          border: '1px solid #e8e8e8',
-          padding: '12px 16px',
-          borderRadius: '16px',
+          backgroundColor: 'transparent',
+          border: 'none',
+          padding: '0 16px',
+          borderRadius: '0',
           maxWidth: '100%',
+          boxShadow: 'none',
         },
       },
     },
-  }
+  }), [messages, renderMarkdown])
 
   return (
     <Card className="h-full flex flex-col shadow-sm overflow-hidden">
@@ -393,12 +401,12 @@ function CitationCard({ citation, onClick }: { citation: Citation; onClick: () =
       onClick={onClick}
       className={`flex items-start gap-2 p-2 bg-white rounded-lg border text-xs max-w-[260px] cursor-pointer transition-all ${
         isHighlighted 
-          ? 'border-blue-400 ring-2 ring-blue-100 shadow-sm' 
-          : 'border-slate-200 hover:border-blue-300 hover:shadow-sm'
+          ? 'border-orange-400 ring-2 ring-orange-100 shadow-sm' 
+          : 'border-slate-200 hover:border-orange-300 hover:shadow-sm'
       }`}
     >
       <div className="flex items-center gap-1">
-        <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-medium">
+        <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded-full flex items-center justify-center text-xs font-medium">
           {citation.index}
         </span>
       </div>
@@ -408,7 +416,7 @@ function CitationCard({ citation, onClick }: { citation: Citation; onClick: () =
           <span className="font-medium text-slate-700 truncate">
             {citation.sourceTitle}
           </span>
-          <span className="text-blue-500 flex-shrink-0 font-medium">{similarity}%</span>
+          <span className="text-orange-500 flex-shrink-0 font-medium">{similarity}%</span>
         </div>
         {citation.metadata.page && (
           <span className="text-slate-400">第 {citation.metadata.page} 页</span>
@@ -517,7 +525,7 @@ function processTextWithCitations(
                 e.stopPropagation()
                 onCitationClick(index)
               }}
-              className="inline-flex items-center justify-center w-5 h-5 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-full mx-0.5 cursor-pointer transition-colors"
+              className="inline-flex items-center justify-center w-5 h-5 text-xs font-medium text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-full mx-0.5 cursor-pointer transition-colors"
               style={{ fontSize: '10px', lineHeight: 1, verticalAlign: 'super' }}
             >
               {index}

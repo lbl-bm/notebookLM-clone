@@ -7,6 +7,23 @@ export const RAG_CONFIG = {
   topK: 8,
   similarityThreshold: 0.3,
   maxContextTokens: 4000,
+  useHybridSearch: true,
+  vectorWeight: 0.7,
+  ftsWeight: 0.3,
+}
+
+/**
+ * 检索类型
+ */
+export type RetrievalType = 'vector' | 'hybrid' | 'fts'
+
+/**
+ * 检索得分详情
+ */
+export interface RetrievalScores {
+  vectorScore?: number
+  ftsScore?: number
+  combinedScore?: number
 }
 
 /**
@@ -21,6 +38,7 @@ export interface RetrievedChunk {
   content: string
   similarity: number
   metadata: ChunkMetadata  // 使用标准接口
+  scores?: RetrievalScores
 }
 
 export interface RetrievalResult {
@@ -29,6 +47,7 @@ export interface RetrievalResult {
   retrievalMs: number
   embeddingMs: number
   queryEmbedding: number[]
+  retrievalType?: RetrievalType
 }
 
 export async function retrieveChunks(params: {
@@ -103,4 +122,85 @@ export function deduplicateChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
     seen.add(chunk.id)
     return true
   })
+}
+
+/**
+ * 混合检索
+ * 结合向量相似度和全文检索，提高检索质量
+ */
+export async function hybridRetrieveChunks(params: {
+  notebookId: string
+  query: string
+  sourceIds?: string[]
+  topK?: number
+  threshold?: number
+  vectorWeight?: number
+  ftsWeight?: number
+}): Promise<RetrievalResult> {
+  const startTime = Date.now()
+  const {
+    notebookId,
+    query,
+    sourceIds,
+    topK = RAG_CONFIG.topK,
+    threshold = RAG_CONFIG.similarityThreshold,
+    vectorWeight = RAG_CONFIG.vectorWeight,
+    ftsWeight = RAG_CONFIG.ftsWeight,
+  } = params
+
+  const embeddingStartTime = Date.now()
+  const queryEmbedding = await getEmbedding(query)
+  const embeddingMs = Date.now() - embeddingStartTime
+
+  const retrievalStartTime = Date.now()
+  
+  const rawChunks = await vectorStore.hybridSearch({
+    notebookId,
+    queryEmbedding,
+    queryText: query,
+    topK,
+    threshold,
+    sourceIds,
+    vectorWeight,
+    ftsWeight,
+  })
+
+  const retrievalMs = Date.now() - retrievalStartTime
+
+  const foundSourceIds = [...new Set(rawChunks.map(c => c.sourceId))]
+  
+  const sources = await prisma.source.findMany({
+    where: { id: { in: foundSourceIds } },
+    select: { id: true, title: true, type: true }
+  })
+  
+  const sourceMap = new Map(sources.map(s => [s.id, s]))
+
+  const chunks: RetrievedChunk[] = rawChunks.map(chunk => {
+    const source = sourceMap.get(chunk.sourceId)
+    return {
+      id: chunk.id,
+      sourceId: chunk.sourceId,
+      sourceTitle: source?.title || '未知来源',
+      sourceType: (source?.type as 'file' | 'url') || 'file',
+      chunkIndex: chunk.chunkIndex,
+      content: chunk.content,
+      similarity: chunk.combinedScore,
+      metadata: chunk.metadata,
+      scores: {
+        vectorScore: chunk.vectorScore,
+        ftsScore: chunk.ftsScore,
+        combinedScore: chunk.combinedScore,
+      },
+    }
+  })
+
+  return {
+    chunks,
+    hasEvidence: chunks.length > 0,
+    retrievalMs,
+    embeddingMs,
+    queryEmbedding,
+    retrievalType: 'hybrid',
+  }
 }

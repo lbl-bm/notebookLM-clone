@@ -6,8 +6,8 @@ interface RetrievalFlowDiagramProps {
   timing: {
     embedding: number
     retrieval: number
-    generation: number
-    total: number
+    generation?: number
+    total?: number
   }
   model: string
   chunkCount: number
@@ -29,8 +29,8 @@ export function RetrievalFlowDiagram({ timing, model, chunkCount }: RetrievalFlo
     },
     {
       icon: <Search className="w-4 h-4" />,
-      label: '向量检索',
-      sub: `pgvector (${timing.retrieval}ms)`,
+      label: '混合检索',
+      sub: `pgvector + FTS (${timing.retrieval}ms)`,
       color: 'bg-orange-100 text-orange-700',
     },
     {
@@ -39,13 +39,16 @@ export function RetrievalFlowDiagram({ timing, model, chunkCount }: RetrievalFlo
       sub: `${chunkCount} 个 chunks`,
       color: 'bg-green-100 text-green-700',
     },
-    {
+  ]
+
+  if (timing.generation) {
+    steps.push({
       icon: <Zap className="w-4 h-4" />,
       label: '生成回答',
       sub: `${model} (${timing.generation}ms)`,
       color: 'bg-indigo-100 text-indigo-700',
-    },
-  ]
+    })
+  }
 
   return (
     <div className="flex flex-col items-center py-4 space-y-2">
@@ -66,11 +69,13 @@ export function RetrievalFlowDiagram({ timing, model, chunkCount }: RetrievalFlo
         </div>
       ))}
       
-      <div className="mt-4 pt-2 border-t w-full text-center">
-        <span className="text-[10px] text-muted-foreground">
-          总耗时: <span className="font-mono font-bold text-foreground">{timing.total}ms</span>
-        </span>
-      </div>
+      {timing.total && (
+        <div className="mt-4 pt-2 border-t w-full text-center">
+          <span className="text-[10px] text-muted-foreground">
+            总耗时: <span className="font-mono font-bold text-foreground">{timing.total}ms</span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

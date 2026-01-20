@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { FileText, Globe, ChevronDown, ChevronUp } from 'lucide-react'
+import { FileText, Globe, ChevronDown, ChevronUp, Database, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChunkCardProps {
@@ -14,10 +14,16 @@ interface ChunkCardProps {
     score: number
     content: string
     metadata: { page?: number; url?: string }
+    scores?: {
+      vectorScore?: number
+      ftsScore?: number
+      combinedScore?: number
+    }
   }
+  showScores?: boolean
 }
 
-export function ChunkCard({ chunk }: ChunkCardProps) {
+export function ChunkCard({ chunk, showScores }: ChunkCardProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const scorePercentage = Math.round(chunk.score * 100)
 
@@ -45,10 +51,22 @@ export function ChunkCard({ chunk }: ChunkCardProps) {
           <Progress 
             value={scorePercentage} 
             className="h-1.5 w-12" 
-            // @ts-ignore - custom color via CSS if needed, but default is fine
           />
         </div>
       </div>
+
+      {showScores && chunk.scores && (
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <Database className="w-3 h-3" />
+            <span>向量: {Math.round((chunk.scores.vectorScore || 0) * 100)}%</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Search className="w-3 h-3" />
+            <span>全文: {chunk.scores.ftsScore?.toFixed(3) || 0}</span>
+          </div>
+        </div>
+      )}
 
       <div className="relative">
         <p className={cn(

@@ -7,12 +7,13 @@
 // 基础类型
 // ============================================
 
-export type SourceType = 'file' | 'url' | 'video'
+export type SourceType = 'file' | 'url' | 'video' | 'text'
 export type SourceStatus = 'pending' | 'processing' | 'ready' | 'failed'
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type AnswerMode = 'grounded' | 'no_evidence'
 export type ArtifactType = 'summary' | 'outline' | 'quiz' | 'custom'
 export type QueueStatus = 'pending' | 'processing' | 'completed' | 'failed'
+export type RetrievalType = 'vector' | 'hybrid' | 'fts'  // 混合检索类型
 
 // ============================================
 // Citations 结构（PROJECT_SPEC.md 6.2）
@@ -61,6 +62,12 @@ export interface ProcessingLog {
 // Message Metadata（RAG 链路可视化）
 // ============================================
 
+export interface RetrievalScores {
+  vectorScore?: number
+  ftsScore?: number
+  combinedScore?: number
+}
+
 export interface MessageMetadata {
   retrievalMs?: number      // 检索耗时
   generationMs?: number     // 生成耗时
@@ -68,6 +75,32 @@ export interface MessageMetadata {
   topK?: number             // 检索的 chunk 数量
   chunkCount?: number       // 实际返回的 chunk 数量
   queryEmbeddingMs?: number // query embedding 耗时
+  retrievalDetails?: {
+    query: string
+    retrievalParams: {
+      sourceIds: string[]
+      topK: number
+      threshold: number
+      useHybridSearch?: boolean
+      retrievalType?: RetrievalType
+    }
+    model: string
+    chunks: Array<{
+      id: string
+      sourceId: string
+      sourceName: string
+      score: number
+      content: string
+      metadata: ChunkMetadata
+      scores?: RetrievalScores
+    }>
+    timing: {
+      embedding: number
+      retrieval: number
+      generation?: number
+      total?: number
+    }
+  }
 }
 
 // ============================================
