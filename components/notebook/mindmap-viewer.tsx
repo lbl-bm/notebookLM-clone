@@ -230,7 +230,7 @@ function MindMapContent({ mindmap }: MindMapViewerProps) {
       toast({
         title: '导出失败',
         description: '请稍后重试',
-        variant: 'destructive',
+        variant: 'error',
       })
     }
   }, [mindmap.title])

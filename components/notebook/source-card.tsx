@@ -325,7 +325,7 @@ export function SourceCard({
       toast({
         title: '删除失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setLoading(false)
@@ -358,7 +358,7 @@ export function SourceCard({
       toast({
         title: isUrl ? '重新抓取失败' : '重试失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setLoading(false)
@@ -414,7 +414,7 @@ export function SourceCard({
       toast({
         title: '处理失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setLoading(false)
@@ -439,7 +439,7 @@ export function SourceCard({
       toast({
         title: '取消失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setLoading(false)

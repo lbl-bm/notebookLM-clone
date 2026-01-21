@@ -11,8 +11,14 @@ import {
   Loader2,
   Search,
   ArrowRight,
-  AlertCircle,
 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+
+interface SearchResult {
+  title: string
+  link: string
+  content: string
+}
 
 interface SourceSearchBoxProps {
   notebookId: string
@@ -27,7 +33,8 @@ export function SourceSearchBox({
 }: SourceSearchBoxProps) {
   const [searchValue, setSearchValue] = useState('')
   const [isSearching, setIsSearching] = useState(false)
-  const [error, setError] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const { toast } = useToast()
 
   // 检测是否为有效 URL
   const isValidUrl = (str: string): boolean => {
@@ -39,48 +46,63 @@ export function SourceSearchBox({
     }
   }
 
+  const addUrlSource = async (url: string) => {
+    const response = await fetch('/api/sources/url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        notebookId,
+        url,
+      }),
+    })
+
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      throw new Error(data?.error || '添加失败')
+    }
+
+    if (data?.warning) {
+      toast({ title: '提示', description: data.warning, variant: 'warning' })
+    }
+
+    toast({ title: '已添加来源', description: '来源已成功添加到知识库', variant: 'success' })
+    onSuccess?.()
+  }
+
   // 处理智能搜索/添加URL
   const handleSearch = async () => {
     const value = searchValue.trim()
     if (!value) return
     
-    setError('')
     setIsSearching(true)
 
     try {
       // 检测是否为URL
       if (isValidUrl(value)) {
-        // 直接添加URL
-        const response = await fetch('/api/sources/url', {
+        await addUrlSource(value)
+        setSearchValue('')
+        setSearchResults([])
+      } else {
+        const res = await fetch('/api/sources/web-search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            notebookId,
-            url: value,
-          }),
+          body: JSON.stringify({ query: value }),
         })
-
-        const data = await response.json()
-
-        if (!response.ok) {
-          throw new Error(data.error || '添加失败')
+        const data = await res.json().catch(() => null)
+        if (!res.ok) {
+          throw new Error(data?.error || '搜索失败')
         }
 
-        // 如果有警告信息，显示但不阻止成功
-        if (data.warning) {
-          setError(data.warning)
-          setTimeout(() => setError(''), 3000)
-        }
+        const results = Array.isArray(data?.results) ? data.results : []
+        setSearchResults(results)
 
-        setSearchValue('')
-        onSuccess?.()
-      } else {
-        // TODO: 实现AI智能搜索功能
-        // 暂时提示用户输入有效URL
-        setError('请输入有效的网址（以 http:// 或 https:// 开头）')
+        if (results.length === 0) {
+          toast({ title: '未找到结果', description: '请尝试换个关键词', variant: 'warning' })
+        }
       }
     } catch (err) {
-      setError((err as Error).message)
+      toast({ title: '操作失败', description: (err as Error).message, variant: 'error' })
     } finally {
       setIsSearching(false)
     }
@@ -94,11 +116,11 @@ export function SourceSearchBox({
           <Search className="h-4 w-4 text-slate-400 mr-3 flex-shrink-0" />
           <input
             type="text"
-            placeholder="在网络中搜索新来源"
+            placeholder="在网络中搜索知识来源"
             value={searchValue}
             onChange={(e) => {
               setSearchValue(e.target.value)
-              setError('')
+              setSearchResults([])
             }}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             className="flex-1 bg-transparent border-none outline-none text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
@@ -119,11 +141,41 @@ export function SourceSearchBox({
         </div>
       </div>
 
-      {/* 错误/警告提示 */}
-      {error && (
-        <div className="flex items-start gap-2 px-1">
-          <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-600 dark:text-amber-400">{error}</p>
+      {searchResults.length > 0 && (
+        <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+          {searchResults.map((item, i) => (
+            <div
+              key={`${item.link}_${i}`}
+              className="p-3 border-b border-slate-200 dark:border-slate-700 last:border-b-0"
+            >
+              <p className="font-medium text-sm text-slate-900 dark:text-slate-100 truncate">
+                {item.title || item.link}
+              </p>
+              {item.content && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">
+                  {item.content}
+                </p>
+              )}
+              <button
+                className="text-xs text-blue-600 dark:text-blue-400 mt-2 disabled:opacity-50"
+                disabled={isSearching}
+                onClick={async () => {
+                  setIsSearching(true)
+                  try {
+                    await addUrlSource(item.link)
+                    setSearchResults([])
+                    setSearchValue('')
+                  } catch (err) {
+                    toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
+                  } finally {
+                    setIsSearching(false)
+                  }
+                }}
+              >
+                添加此来源
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>

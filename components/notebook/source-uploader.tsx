@@ -24,10 +24,10 @@ import {
   CheckCircle2,
   Youtube,
   Globe,
-  AlertCircle,
   Type,
 } from 'lucide-react'
 import { SourceSearchBox } from './add-source-dialog'
+import { useToast } from '@/hooks/use-toast'
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0]
 
@@ -66,19 +66,18 @@ export function AddSourceModal({
   const attachmentsRef = useRef<AttachmentsRef>(null)
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const { toast } = useToast()
   
   // URL 输入状态
   const [showUrlInput, setShowUrlInput] = useState(false)
   const [urlValue, setUrlValue] = useState('')
   const [urlLoading, setUrlLoading] = useState(false)
-  const [urlError, setUrlError] = useState('')
 
   // 文字输入状态
   const [showTextInput, setShowTextInput] = useState(false)
   const [textTitle, setTextTitle] = useState('')
   const [textContent, setTextContent] = useState('')
   const [textLoading, setTextLoading] = useState(false)
-  const [textError, setTextError] = useState('')
   const [textCharCount, setTextCharCount] = useState(0)
 
   const handleUpload = (file: FileType) => {
@@ -161,15 +160,14 @@ export function AddSourceModal({
     try {
       const urlObj = new URL(url)
       if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-        setUrlError('仅支持 http/https 链接')
+        toast({ title: '格式错误', description: '仅支持 http/https 链接', variant: 'warning' })
         return
       }
     } catch {
-      setUrlError('请输入有效的网址')
+      toast({ title: '格式错误', description: '请输入有效的网址', variant: 'warning' })
       return
     }
 
-    setUrlError('')
     setUrlLoading(true)
 
     try {
@@ -196,16 +194,16 @@ export function AddSourceModal({
       fetch('/api/cron/process-queue?manual=true').catch(err => {
         console.error('触发处理队列失败:', err)
       })
-      
+
       // 如果有警告，显示一下
       if (data.warning) {
-        setUrlError(data.warning)
-        setTimeout(() => setUrlError(''), 3000)
+        toast({ title: '提示', description: data.warning, variant: 'warning' })
       }
 
+      toast({ title: '已添加来源', description: '网页链接已成功添加', variant: 'success' })
       onSuccess?.()
     } catch (err) {
-      setUrlError((err as Error).message)
+      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
     } finally {
       setUrlLoading(false)
     }
@@ -216,7 +214,6 @@ export function AddSourceModal({
     e.preventDefault()
     setShowUrlInput(true)
     setShowTextInput(false)
-    setUrlError('')
   }
 
   const handleTextClick = (e: React.MouseEvent) => {
@@ -224,7 +221,6 @@ export function AddSourceModal({
     e.preventDefault()
     setShowTextInput(true)
     setShowUrlInput(false)
-    setTextError('')
   }
 
   // 处理添加文字
@@ -233,21 +229,20 @@ export function AddSourceModal({
     const content = textContent.trim()
 
     if (!title) {
-      setTextError('请输入标题')
+      toast({ title: '请输入标题', variant: 'warning' })
       return
     }
 
     if (content.length < 10) {
-      setTextError('文字内容至少需要 10 个字符')
+      toast({ title: '文字内容至少需要 10 个字符', variant: 'warning' })
       return
     }
 
     if (content.length > 50000) {
-      setTextError('文字内容不能超过 50000 字符')
+      toast({ title: '文字内容不能超过 50000 字符', variant: 'warning' })
       return
     }
 
-    setTextError('')
     setTextLoading(true)
 
     try {
@@ -278,9 +273,10 @@ export function AddSourceModal({
         console.error('触发处理队列失败:', err)
       })
 
+      toast({ title: '已添加来源', description: '文字内容已成功添加', variant: 'success' })
       onSuccess?.()
     } catch (err) {
-      setTextError((err as Error).message)
+      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
     } finally {
       setTextLoading(false)
     }
@@ -384,7 +380,6 @@ export function AddSourceModal({
                     value={urlValue}
                     onChange={(e) => {
                       setUrlValue(e.target.value)
-                      setUrlError('')
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
                     className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
@@ -410,18 +405,11 @@ export function AddSourceModal({
                     onClick={() => {
                       setShowUrlInput(false)
                       setUrlValue('')
-                      setUrlError('')
                     }}
                   >
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
-                {urlError && (
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-amber-600 dark:text-amber-400">{urlError}</p>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -436,7 +424,6 @@ export function AddSourceModal({
                     value={textTitle}
                     onChange={(e) => {
                       setTextTitle(e.target.value)
-                      setTextError('')
                     }}
                     className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                     autoFocus
@@ -449,7 +436,6 @@ export function AddSourceModal({
                     onChange={(e) => {
                       setTextContent(e.target.value)
                       setTextCharCount(e.target.value.length)
-                      setTextError('')
                     }}
                     className="w-full h-40 p-3 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -457,12 +443,6 @@ export function AddSourceModal({
                     {textCharCount}/50000
                   </span>
                 </div>
-                {textError && (
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-amber-600 dark:text-amber-400">{textError}</p>
-                  </div>
-                )}
                 <div className="flex gap-2 justify-end">
                   <Button
                     type="button"
@@ -473,7 +453,6 @@ export function AddSourceModal({
                       setTextTitle('')
                       setTextContent('')
                       setTextCharCount(0)
-                      setTextError('')
                     }}
                   >
                     取消

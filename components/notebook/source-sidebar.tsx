@@ -115,7 +115,7 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
       toast({
         title: '处理失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     }
   }, [router, toast])
@@ -133,7 +133,7 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
       toast({
         title: '取消失败',
         description: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     }
   }, [router, toast])

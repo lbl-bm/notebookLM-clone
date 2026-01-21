@@ -8,8 +8,8 @@ import type {
   ToastProps,
 } from "@/components/ui/toast"
 
-const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 4000 // 4秒后自动消失
+const TOAST_LIMIT = 3
+const TOAST_REMOVE_DELAY = 2500 // 2.5秒后自动消失
 
 type ToasterToast = ToastProps & {
   id: string
