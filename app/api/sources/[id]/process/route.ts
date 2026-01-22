@@ -116,25 +116,20 @@ export async function POST(
 
     await upsertQueueRecord(sourceId, 'processing', 3)
 
-    try {
-      await processSource(sourceId)
-      await upsertQueueRecord(sourceId, 'completed', 3)
-    } catch (error) {
-      const err = error as Error
-      await handleFailure(sourceId, err)
-      return NextResponse.json({ success: false, error: err.message }, { status: 500 })
-    }
-
-    const updatedSource = await prisma.source.findUnique({
-      where: { id: sourceId },
-      select: { status: true, processingLog: true },
-    })
+    // 异步处理，不等待完成（避免超时）
+    processSource(sourceId)
+      .then(async () => {
+        await upsertQueueRecord(sourceId, 'completed', 3)
+      })
+      .catch(async (err: Error) => {
+        console.error('[Process] 处理失败:', err)
+        await handleFailure(sourceId, err)
+      })
 
     return NextResponse.json({
       success: true,
+      message: '处理已启动',
       sourceId,
-      status: updatedSource?.status,
-      processingLog: updatedSource?.processingLog,
     })
   } catch (error) {
     const err = error as Error
