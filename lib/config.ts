@@ -35,20 +35,20 @@ export const supabaseConfig = {
   secretKey: process.env.SUPABASE_SECRET_KEY!,
 }
 
+// LongCat 配置
+export const longcatConfig = {
+  apiKey: process.env.LONGCAT_API_KEY!,
+  baseUrl: process.env.LONGCAT_BASE_URL || 'https://api.longcat.chat/openai',
+  chatModel: process.env.LONGCAT_CHAT_MODEL || 'LongCat-Flash-Thinking',
+}
+
 // 智谱 AI 配置
 export const zhipuConfig = {
   apiKey: process.env.ZHIPU_API_KEY!,
   baseUrl: process.env.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api',
   embeddingModel: process.env.ZHIPU_EMBEDDING_MODEL || 'embedding-3',
   chatModel: process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
-  studioModel: process.env.ZHIPU_STUDIO_MODEL || process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
-}
-
-// LongCat 配置
-export const longcatConfig = {
-  apiKey: process.env.LONGCAT_API_KEY!,
-  baseUrl: process.env.LONGCAT_BASE_URL || 'https://api.longcat.chat/openai',
-  chatModel: process.env.LONGCAT_CHAT_MODEL || 'LongCat-Flash-Thinking',
+  studioModel: process.env.ZHIPU_STUDIO_MODEL || longcatConfig.chatModel || 'LongCat-Flash-Thinking',
 }
 
 // 模型提供商配置
@@ -70,16 +70,16 @@ export const availableModels: ModelConfig[] = [
     id: 'fast',
     provider: 'zhipu',
     model: zhipuConfig.chatModel,
-    displayName: '快速模式 (GLM-4)',
-    description: '智能采样，5-15秒',
+    displayName: zhipuConfig.chatModel,
+    description: '',
     icon: 'zap',
   },
   {
     id: 'precise',
     provider: 'longcat',
     model: longcatConfig.chatModel,
-    displayName: '精准模式 (LongCat)',
-    description: 'Map-Reduce，30-90秒',
+    displayName: longcatConfig.chatModel,
+    description: '',
     icon: 'target',
   },
 ]
