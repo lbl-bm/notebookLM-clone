@@ -1,198 +1,164 @@
-/**
- * Cron Job Worker - 处理队列
- * 
- * 每分钟执行一次，处理 pending 状态的 Source
- * 单次执行控制在 30s 内，避免 Vercel 超时
- * 
- * 触发方式：
- * - Vercel Cron: GET /api/cron/process-queue
- * - 手动触发: GET /api/cron/process-queue?manual=true
- */
-
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db/prisma'
 import { processSource } from '@/lib/processing/processor'
 
-/**
- * 重试配置
- */
-const RETRY_CONFIG = {
-  maxAttempts: 3,
-  retryDelays: [60, 300, 900], // 1分钟, 5分钟, 15分钟（秒）
-}
+// Vercel Hobby 限制 Serverless Function 执行时间 (通常为 10s 或 60s)
+// 我们每次只处理少量任务，避免超时
+const BATCH_SIZE = 2
 
-/**
- * 获取下一个待处理的任务
- */
-async function getNextTask() {
-  const job = await prisma.processingQueue.findFirst({
-    where: {
-      status: 'pending',
-      attempts: { lt: RETRY_CONFIG.maxAttempts },
-    },
-    orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-  })
-
-  if (!job) return null
-
-  const source = await prisma.source.findUnique({
-    where: { id: job.sourceId },
-  })
-
-  if (!source) {
-    await prisma.processingQueue.update({
-      where: { id: job.id },
-      data: {
-        status: 'failed',
-        errorMessage: 'Source 不存在',
-        completedAt: new Date(),
-        attempts: job.attempts + 1,
-      },
-    })
-    return null
-  }
-
-  if (source.status !== 'pending') {
-    await prisma.processingQueue.update({
-      where: { id: job.id },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-      },
-    })
-    return null
-  }
-
-  return { source, job }
-}
-
-/**
- * 处理失败后的重试逻辑
- */
-async function handleFailure(sourceId: string, queueId: bigint, error: Error) {
-  const source = await prisma.source.findUnique({
-    where: { id: sourceId },
-  })
-
-  if (!source) return
-
-  const newRetryCount = source.retryCount + 1
-
-  if (newRetryCount >= RETRY_CONFIG.maxAttempts) {
-    // 超过最大重试次数，标记为失败
-    await prisma.source.update({
-      where: { id: sourceId },
-      data: {
-        status: 'failed',
-        retryCount: newRetryCount,
-        errorMessage: error.message,
-      },
-    })
-    await prisma.processingQueue.update({
-      where: { id: queueId },
-      data: {
-        status: 'failed',
-        errorMessage: error.message,
-        completedAt: new Date(),
-        attempts: { increment: 1 },
-      },
-    })
-  } else {
-    // 重置为 pending，等待下次重试
-    await prisma.source.update({
-      where: { id: sourceId },
-      data: {
-        status: 'pending',
-        retryCount: newRetryCount,
-        errorMessage: error.message,
-      },
-    })
-    await prisma.processingQueue.update({
-      where: { id: queueId },
-      data: {
-        status: 'pending',
-        errorMessage: error.message,
-        startedAt: null,
-        completedAt: null,
-        attempts: { increment: 1 },
-      },
-    })
-  }
-}
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
-  const startTime = Date.now()
-  const isManual = request.nextUrl.searchParams.get('manual') === 'true'
-
-  // 验证 Cron 密钥（生产环境）
-  if (!isManual && process.env.NODE_ENV === 'production') {
-    const authHeader = request.headers.get('authorization')
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-  }
-
   try {
-    // 获取下一个任务
-    const task = await getNextTask()
+    const authHeader = request.headers.get('Authorization')
+    const { searchParams } = new URL(request.url)
+    const isManual = searchParams.get('manual') === 'true'
 
-    if (!task) {
-      return NextResponse.json({
-        success: true,
-        message: '没有待处理的任务',
-        duration: Date.now() - startTime,
-      })
+    // 我们采用混合验证：
+    // 1. Bearer Token 验证 (GitHub Actions)
+    // 2. 没有任何验证 (公开)? 不安全。
+    // 3. 用户 Session 验证 (前端触发)
+    
+    let isAuthorized = false
+    
+    if (authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+      isAuthorized = true
+    } else {
     }
 
-    const { source, job } = task
+    // 简单起见，我们允许：
+    // 1. 带正确 Bearer Token 的请求
+    // 2. 带 manual=true 参数的请求 (视作前端触发，需自行承担风险，或后续加 Session 验证)
+    
+    if (!isAuthorized && !isManual && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+       // 如果不是 manual 且 密钥不对
+       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    // 更新队列状态
-    await prisma.processingQueue.update({
-      where: { id: job.id },
-      data: {
-        status: 'processing',
-        startedAt: new Date(),
+    // 2. 获取待处理任务
+    // 优先处理 ProcessingQueue 中 pending 的任务
+    const queueItems = await prisma.processingQueue.findMany({
+      where: { 
+        status: 'pending',
+        attempts: { lt: 3 } // 重试次数小于 3
       },
+      orderBy: [
+        { priority: 'desc' },
+        { createdAt: 'asc' }
+      ],
+      take: BATCH_SIZE,
     })
 
-    // 处理 Source
-    await processSource(source.id)
+    const results = []
 
-    // 标记完成
-    await prisma.processingQueue.update({
-      where: { id: job.id },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-      },
-    })
+    // 3. 处理任务
+    if (queueItems.length > 0) {
+      for (const item of queueItems) {
+        try {
+          // 更新为 processing
+          await prisma.processingQueue.update({
+            where: { id: item.id },
+            data: { status: 'processing', startedAt: new Date() }
+          })
+          
+          // 更新 Source 状态 (兼容旧逻辑)
+          await prisma.source.update({
+             where: { id: item.sourceId },
+             data: { status: 'processing', errorMessage: null }
+          })
 
-    const duration = Date.now() - startTime
+          // 执行处理 (不等待，防止超时? 不，Cron Job 应该等待结果记录日志)
+          // 但 Vercel Function 有时间限制。
+          // 我们这里选择 await，但只处理少量。
+          await processSource(item.sourceId)
+          
+          // 完成
+          await prisma.processingQueue.update({
+            where: { id: item.id },
+            data: { status: 'completed', completedAt: new Date() }
+          })
+          
+          results.push({ id: item.id, status: 'success' })
+          
+        } catch (error) {
+          console.error(`Failed to process item ${item.id}:`, error)
+          const err = error as Error
+          
+          // 失败记录
+          await prisma.processingQueue.update({
+            where: { id: item.id },
+            data: { 
+              status: 'failed', 
+              errorMessage: err.message,
+              attempts: { increment: 1 }
+            }
+          })
+          
+          // 如果达到最大重试次数，标记 Source 为失败
+          if (item.attempts + 1 >= 3) {
+             await prisma.source.update({
+               where: { id: item.sourceId },
+               data: { status: 'failed', errorMessage: err.message }
+             })
+          }
+          
+          results.push({ id: item.id, status: 'failed', error: err.message })
+        }
+      }
+    } else {
+      // 如果队列空，检查 Sources 表是否有漏网之鱼 (状态为 pending 但不在队列中)
+      // 这是一种自我修复机制
+      const stuckSources = await prisma.source.findMany({
+        where: { status: 'pending' },
+        take: BATCH_SIZE,
+        orderBy: { createdAt: 'asc' }
+      })
+      
+      for (const source of stuckSources) {
+         // 检查是否已在队列
+         const inQueue = await prisma.processingQueue.findFirst({
+           where: { sourceId: source.id, status: { in: ['pending', 'processing'] } }
+         })
+         
+         if (!inQueue) {
+            // 加入队列并立即处理
+            // ...逻辑同上，简化处理直接调用 processSource
+            // 为保持一致性，先加队列
+            const q = await prisma.processingQueue.create({
+              data: { sourceId: source.id, status: 'processing', startedAt: new Date() }
+            })
+            
+            try {
+               await processSource(source.id)
+               await prisma.processingQueue.update({
+                 where: { id: q.id },
+                 data: { status: 'completed', completedAt: new Date() }
+               })
+               results.push({ sourceId: source.id, status: 'success (recovered)' })
+            } catch (error) {
+               const err = error as Error
+               await prisma.processingQueue.update({
+                 where: { id: q.id },
+                 data: { status: 'failed', errorMessage: err.message, attempts: 1 }
+               })
+               await prisma.source.update({
+                 where: { id: source.id },
+                 data: { status: 'failed', errorMessage: err.message }
+               })
+               results.push({ sourceId: source.id, status: 'failed (recovered)', error: err.message })
+            }
+         }
+      }
+    }
 
-    return NextResponse.json({
-      success: true,
-      sourceId: source.id,
-      sourceType: source.type,
-      duration,
+    return NextResponse.json({ 
+      success: true, 
+      processed: results.length, 
+      results 
     })
 
   } catch (error) {
-    const err = error as Error
-    console.error('[Cron] 处理失败:', err)
-
-    const processingJob = await prisma.processingQueue.findFirst({
-      where: { status: 'processing' },
-      orderBy: [{ startedAt: 'desc' }, { createdAt: 'desc' }],
-    })
-
-    if (processingJob) {
-      await handleFailure(processingJob.sourceId, processingJob.id, err)
-    }
-
-    return NextResponse.json({
-      success: false,
-      error: err.message,
-      duration: Date.now() - startTime,
-    }, { status: 500 })
+    console.error('Cron job failed:', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

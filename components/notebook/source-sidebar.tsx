@@ -60,8 +60,15 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
   const hasActiveProcessingSources = sources.some(s => ACTIVE_PROCESSING_STATUSES.includes(s.status))
   const hasQueuedPendingSources = sources.some(s => s.status === 'pending' && s.queueStatus === 'pending')
 
-  // 轮询刷新状态
+  // 轮询刷新状态 + 自动触发处理
   useEffect(() => {
+    // 如果有待处理的任务但没有正在进行的任务，尝试触发处理
+    if (hasQueuedPendingSources && !hasActiveProcessingSources) {
+      // 使用 manual=true 标记为前端触发
+      // 注意：这里不需要等待结果，fire-and-forget
+      fetch('/api/cron/process-queue?manual=true').catch(console.error)
+    }
+
     if (!hasActiveProcessingSources && !hasQueuedPendingSources) return
 
     const intervalMs = hasActiveProcessingSources ? 5000 : 15000

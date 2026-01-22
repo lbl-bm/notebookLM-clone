@@ -301,6 +301,7 @@ export function AddSourceModal({
               <SourceSearchBox
                 notebookId={notebookId}
                 onSuccess={handleSearchSuccess}
+                mode="modal"
               />
             </div>
           </div>

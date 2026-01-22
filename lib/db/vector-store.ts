@@ -132,7 +132,7 @@ export class PrismaVectorStore implements VectorStore {
           )
           VALUES
             ${Prisma.join(values)}
-          ON CONFLICT DO NOTHING
+          ON CONFLICT (source_id, chunk_index) DO NOTHING
         `
         
         const result = await prisma.$executeRaw(sql)

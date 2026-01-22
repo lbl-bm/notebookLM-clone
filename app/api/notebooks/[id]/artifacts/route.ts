@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { prisma } from '@/lib/db/prisma'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -45,6 +47,7 @@ export async function GET(
       select: {
         id: true,
         type: true,
+        title: true,
         content: true,
         input: true,
         createdAt: true,
@@ -56,6 +59,7 @@ export async function GET(
       artifacts: artifacts.map(a => ({
         id: a.id,
         type: a.type,
+        title: a.title,
         content: a.content,
         input: a.input,
         createdAt: a.createdAt.toISOString(),
