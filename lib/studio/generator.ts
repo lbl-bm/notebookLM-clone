@@ -3,7 +3,7 @@
  * US-008: Studio 动作生成产物
  */
 
-import { getStudioModelConfig } from '@/lib/config'
+import { zhipuConfig, longcatConfig, getStudioModelConfig } from '@/lib/config'
 import { 
   getPrompt, 
   MAP_PROMPTS, 
@@ -25,10 +25,15 @@ const TIMEOUT_FAST = 90000     // 快速模式 90 秒（推理模型需要更长
 const TIMEOUT_PRECISE = 180000 // 精准模式 180 秒
 const TIMEOUT_MAP_STEP = 45000 // Map 步骤 45 秒
 
-const studioModelConfig = getStudioModelConfig()
-const studioChatUrl = studioModelConfig.provider === 'zhipu'
-  ? `${studioModelConfig.baseUrl}/paas/v4/chat/completions`
-  : `${studioModelConfig.baseUrl}/chat/completions`
+// 强制使用 LongCat 配置
+const studioModelConfig = {
+  apiKey: longcatConfig.apiKey,
+  baseUrl: longcatConfig.baseUrl,
+  model: longcatConfig.chatModel,
+  provider: 'longcat' as const,
+}
+
+const studioChatUrl = `${studioModelConfig.baseUrl}/v1/chat/completions`
 
 export type StudioMode = 'fast' | 'precise'
 

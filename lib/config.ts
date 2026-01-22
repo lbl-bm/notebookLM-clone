@@ -35,20 +35,20 @@ export const supabaseConfig = {
   secretKey: process.env.SUPABASE_SECRET_KEY!,
 }
 
-// 智谱 AI 配置
-export const zhipuConfig = {
-  apiKey: process.env.ZHIPU_API_KEY!,
-  baseUrl: process.env.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api',
-  embeddingModel: process.env.ZHIPU_EMBEDDING_MODEL || 'embedding-3',
-  chatModel: process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
-  studioModel: process.env.ZHIPU_STUDIO_MODEL || process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
-}
-
 // LongCat 配置
 export const longcatConfig = {
   apiKey: process.env.LONGCAT_API_KEY!,
   baseUrl: process.env.LONGCAT_BASE_URL || 'https://api.longcat.chat/openai',
   chatModel: process.env.LONGCAT_CHAT_MODEL || 'LongCat-Flash-Thinking',
+}
+
+// 智谱 AI 配置
+export const zhipuConfig = {
+  apiKey: process.env.ZHIPU_API_KEY!,
+  baseUrl: process.env.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api',
+  embeddingModel: process.env.ZHIPU_EMBEDDING_MODEL || 'embedding-3',
+  chatModel: process.env.ZHIPU_CHAT_MODEL || 'glm-4.7',
+  studioModel: process.env.ZHIPU_STUDIO_MODEL || longcatConfig.chatModel || 'LongCat-Flash-Thinking',
 }
 
 // 模型提供商配置
@@ -65,59 +65,94 @@ export interface ModelConfig {
   icon: 'zap' | 'target'
 }
 
-export const availableModels: ModelConfig[] = [
+// 对话可用的智谱模型列表
+export const zhipuChatModels: ModelConfig[] = [
   {
-    id: 'fast',
+    id: 'glm-4.7',
     provider: 'zhipu',
-    model: zhipuConfig.chatModel,
-    displayName: '快速模式 (GLM-4)',
-    description: '智能采样，5-15秒',
+    model: 'glm-4.7',
+    displayName: 'GLM-4.7',
+    description: '最新旗舰模型',
     icon: 'zap',
   },
   {
-    id: 'precise',
+    id: 'glm-4.7-flashx',
+    provider: 'zhipu',
+    model: 'glm-4.7-flashx',
+    displayName: 'GLM-4.7 FlashX',
+    description: '极速版模型',
+    icon: 'zap',
+  },
+  {
+    id: 'glm-4.5-airx',
+    provider: 'zhipu',
+    model: 'glm-4.5-airx',
+    displayName: 'GLM-4.5 AirX',
+    description: '轻量高性价比',
+    icon: 'zap',
+  },
+  {
+    id: 'glm-4-flash',
+    provider: 'zhipu',
+    model: 'glm-4-flash',
+    displayName: 'GLM-4 Flash',
+    description: '免费体验版',
+    icon: 'zap',
+  },
+]
+
+// 可用的所有模型列表
+export const availableModels: ModelConfig[] = [
+  ...zhipuChatModels,
+  {
+    id: 'longcat',
     provider: 'longcat',
     model: longcatConfig.chatModel,
-    displayName: '精准模式 (LongCat)',
-    description: 'Map-Reduce，30-90秒',
+    displayName: longcatConfig.chatModel,
+    description: '精准模式（推理模型）',
     icon: 'target',
   },
 ]
 
 // 获取模型配置
-export function getModelConfig(mode: 'fast' | 'precise' = 'fast') {
-  const selected = availableModels.find(m => m.id === mode) || availableModels[0]
+export function getModelConfig(modelId: string = 'glm-4.7') {
+  const selected = availableModels.find(m => m.id === modelId) || availableModels[0]
   
   if (selected.provider === 'longcat') {
     return {
       apiKey: longcatConfig.apiKey,
       baseUrl: longcatConfig.baseUrl,
-      model: longcatConfig.chatModel,
+      model: selected.model,
       provider: 'longcat' as const,
     }
   }
   return {
     apiKey: zhipuConfig.apiKey,
     baseUrl: zhipuConfig.baseUrl,
-    model: zhipuConfig.chatModel,
+    model: selected.model,
     provider: 'zhipu' as const,
   }
 }
 
+// 根据模型 ID 判断是否为 longcat
+export function isLongCatModel(modelId: string): boolean {
+  const model = availableModels.find(m => m.id === modelId)
+  return model?.provider === 'longcat'
+}
+
+// 根据模型 ID 获取显示名称
+export function getModelDisplayName(modelId: string): string {
+  const model = availableModels.find(m => m.id === modelId)
+  return model?.displayName || modelId
+}
+
 export function getStudioModelConfig() {
-  if (STUDIO_DEFAULT_MODEL === 'longcat') {
-    return {
-      apiKey: longcatConfig.apiKey,
-      baseUrl: longcatConfig.baseUrl,
-      model: longcatConfig.chatModel,
-      provider: 'longcat' as const,
-    }
-  }
+  // 强制使用 LongCat 配置
   return {
-    apiKey: zhipuConfig.apiKey,
-    baseUrl: zhipuConfig.baseUrl,
-    model: zhipuConfig.studioModel,
-    provider: 'zhipu' as const,
+    apiKey: longcatConfig.apiKey,
+    baseUrl: longcatConfig.baseUrl,
+    model: longcatConfig.chatModel,
+    provider: 'longcat' as const,
   }
 }
 

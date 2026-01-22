@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, Mail, Lock, Github, AlertCircle } from 'lucide-react'
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -200,22 +200,30 @@ export default function LoginPage() {
             </Button>
           </div>
         </CardContent>
-
-        <CardFooter className="flex flex-col space-y-2">
-          <Button
-            variant="link"
-            onClick={() => {
-              setMode(mode === 'login' ? 'signup' : 'login')
-              setMessage(null)
-            }}
-            className="text-sm"
-          >
-            {mode === 'login' 
-              ? '没有账户？立即注册' 
-              : '已有账户？返回登录'}
-          </Button>
+        <CardFooter className="flex flex-col gap-2">
+          <div className="text-center text-sm text-muted-foreground">
+            {mode === 'login' ? '还没有账户？' : '已有账户？'}
+            <Button
+              variant="link"
+              className="px-2 font-semibold text-primary"
+              onClick={() => {
+                setMode(mode === 'login' ? 'signup' : 'login')
+                setMessage(null)
+              }}
+            >
+              {mode === 'login' ? '立即注册' : '直接登录'}
+            </Button>
+          </div>
         </CardFooter>
       </Card>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+      <LoginForm />
+    </Suspense>
   )
 }
