@@ -19,7 +19,7 @@ export default function Home() {
           {/* Title */}
           <div className="space-y-4">
             <h1 className="text-5xl md:text-6xl font-bold text-foreground">
-              NotebookLM Clone
+              Personal NotebookLM
             </h1>
             <p className="text-xl md:text-2xl text-muted-foreground">
               AI 驱动的个人知识库管理系统
