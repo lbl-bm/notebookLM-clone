@@ -33,7 +33,7 @@ const studioModelConfig = {
   provider: 'longcat' as const,
 }
 
-const studioChatUrl = `${studioModelConfig.baseUrl}/chat/completions`
+const studioChatUrl = `${studioModelConfig.baseUrl}/v1/chat/completions`
 
 export type StudioMode = 'fast' | 'precise'
 

@@ -30,7 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { availableModels } from '@/lib/config'
+import { availableModels, getModelDisplayName, isLongCatModel } from '@/lib/config'
 
 // 引入 markdown 样式
 import '@ant-design/x-markdown/es/XMarkdown/index.css'
@@ -65,15 +65,15 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   const [currentCitations, setCurrentCitations] = useState<Citation[]>([])
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const { selectCitationByIndex, setCitations } = useCitation()
-  const [chatMode, setChatModeState] = useState<'fast' | 'precise'>('fast')
-  const setChatMode = useCallback((value: 'fast' | 'precise') => {
+  const [chatMode, setChatModeState] = useState<string>('glm-4.7')
+  const setChatMode = useCallback((value: string) => {
     setChatModeState(value)
     localStorage.setItem('chat-model', value)
   }, [])
 
   useEffect(() => {
     const stored = localStorage.getItem('chat-model')
-    if (stored === 'fast' || stored === 'precise') {
+    if (stored && availableModels.some(m => m.id === stored)) {
       setChatModeState(stored)
     }
   }, [])
@@ -239,6 +239,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       let fullContent = ''
       let citations: Citation[] = []
       let retrievalDetails: any = null
+      let isLongCat = response.url.includes('longcat')
 
       while (true) {
         const { done, value } = await reader.read()
@@ -263,6 +264,14 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
           }
         } else {
           fullContent += text
+        }
+
+        // LongCat 的内容在 reasoning_content 字段
+        if (isLongCat) {
+          const reasoningMatch = text.match(/"reasoning_content":"([^"]*)"/)
+          if (reasoningMatch && reasoningMatch[1]) {
+            fullContent = reasoningMatch[1]
+          }
         }
 
         // 更新消息内容
@@ -404,7 +413,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
 
 function ModelSelector({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
-    <div className="w-[160px]">
+    <div className="w-[180px]">
       <Select value={value} onValueChange={onChange} disabled={!!disabled}>
         <SelectTrigger className="h-8 text-xs">
           <SelectValue placeholder="选择模型" />
