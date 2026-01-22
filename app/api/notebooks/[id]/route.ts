@@ -35,11 +35,6 @@ export async function GET(request: Request, { params }: RouteParams) {
         artifacts: {
           orderBy: { createdAt: 'desc' },
         },
-        suggestedQuestions: {
-          where: { isUsed: false },
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-        },
       },
     })
 
@@ -85,8 +80,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
     await verifyOwnership(notebook.ownerId, userId)
 
-    const { title } = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
 
+    const { title } = body
     const updated = await prisma.notebook.update({
       where: { id },
       data: { title },
