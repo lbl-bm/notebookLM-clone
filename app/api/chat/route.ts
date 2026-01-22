@@ -200,22 +200,27 @@ export async function POST(request: Request) {
     const decoder = new TextDecoder()
     let fullContent = ''
 
+    // 使用 TransformStream 逐块处理
     const transformStream = new TransformStream({
       async transform(chunk, controller) {
-        const text = decoder.decode(chunk)
-        // 增加日志用于调试
-        if (process.env.NODE_ENV === 'development') {
-          // console.log('[Chat] 收到 chunk:', text.length)
-        }
+        // chunk 已经是 Uint8Array，直接解码
+        const text = decoder.decode(chunk, { stream: true })
         
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[Chat] 收到 raw chunk:', text)
+        }
+
         const lines = text.split('\n').filter(line => line.trim())
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6)
+            
+            // 检查流结束标记
             if (data === '[DONE]') {
               console.log('[Chat] 流式传输完成，总长度:', fullContent.length)
-              // 流结束，追加 citations 和检索详情
+              
+              // 构造 citations 数据
               const generationMs = Date.now() - startTime - retrievalResult.retrievalMs - retrievalResult.embeddingMs
               const citationsData = JSON.stringify({ 
                 citations, 
@@ -229,34 +234,42 @@ export async function POST(request: Request) {
                   }
                 }
               })
+              
+              // 发送 citations 标记
               controller.enqueue(encoder.encode(`\n\n__CITATIONS__${citationsData}__CITATIONS_END__`))
               
-              // 保存 AI 回复
-              await prisma.message.create({
-                data: {
-                  notebookId,
-                  role: 'assistant',
-                  content: fullContent,
-                  answerMode: 'grounded',
-                  citations: citations as unknown as Prisma.InputJsonValue,
-                  metadata: {
-                    retrievalMs: retrievalResult.retrievalMs,
-                    embeddingMs: retrievalResult.embeddingMs,
-                    generationMs,
-                    model: modelConfig.model,
-                    topK: chunks.length,
-                    chunkCount: chunks.length,
-                    retrievalDetails: {
-                      ...retrievalDetails,
-                      timing: {
-                        ...retrievalDetails.timing,
-                        generation: generationMs,
-                        total: Date.now() - startTime
-                      }
-                    } as unknown as Prisma.InputJsonValue,
+              // 异步保存消息到数据库（不阻塞流结束）
+              // 注意：在 Vercel Serverless 中，如果不 await，可能会在函数冻结前未完成
+              // 但为了响应速度，我们可以先返回。这里为了稳妥选择 await
+              try {
+                await prisma.message.create({
+                  data: {
+                    notebookId,
+                    role: 'assistant',
+                    content: fullContent,
+                    answerMode: 'grounded',
+                    citations: citations as unknown as Prisma.InputJsonValue,
+                    metadata: {
+                      retrievalMs: retrievalResult.retrievalMs,
+                      embeddingMs: retrievalResult.embeddingMs,
+                      generationMs,
+                      model: modelConfig.model,
+                      topK: chunks.length,
+                      chunkCount: chunks.length,
+                      retrievalDetails: {
+                        ...retrievalDetails,
+                        timing: {
+                          ...retrievalDetails.timing,
+                          generation: generationMs,
+                          total: Date.now() - startTime
+                        }
+                      } as unknown as Prisma.InputJsonValue,
+                    },
                   },
-                },
-              })
+                })
+              } catch (e) {
+                console.error('[Chat] 保存消息失败:', e)
+              }
               continue
             }
 
@@ -267,8 +280,9 @@ export async function POST(request: Request) {
                 fullContent += content
                 controller.enqueue(encoder.encode(content))
               }
-            } catch {
-              // 忽略解析错误
+            } catch (e) {
+              // 忽略非 JSON 行或解析错误
+              // console.warn('[Chat] 解析行失败:', line, e)
             }
           }
         }
@@ -277,8 +291,9 @@ export async function POST(request: Request) {
 
     return new Response(response.body?.pipeThrough(transformStream), {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
       },
     })
 
