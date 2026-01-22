@@ -19,6 +19,9 @@ import {
   RAG_CONFIG,
 } from '@/lib/rag'
 
+export const maxDuration = 60 // Vercel Hobby/Pro 限制
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: Request) {
   const startTime = Date.now()
 
@@ -167,6 +170,12 @@ export async function POST(request: Request) {
     })
 
     // 4. 调用 API 流式生成
+    console.log('[Chat] 调用 LLM:', {
+      model: modelConfig.model,
+      baseUrl: modelConfig.baseUrl,
+      promptLength: promptMessages.length
+    })
+
     const response = await fetch(`${modelConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -182,6 +191,7 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       const error = await response.text()
+      console.error('[Chat] LLM API 错误:', response.status, error)
       throw new Error(`Chat API 错误: ${response.status} - ${error}`)
     }
 
@@ -193,12 +203,18 @@ export async function POST(request: Request) {
     const transformStream = new TransformStream({
       async transform(chunk, controller) {
         const text = decoder.decode(chunk)
+        // 增加日志用于调试
+        if (process.env.NODE_ENV === 'development') {
+          // console.log('[Chat] 收到 chunk:', text.length)
+        }
+        
         const lines = text.split('\n').filter(line => line.trim())
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6)
             if (data === '[DONE]') {
+              console.log('[Chat] 流式传输完成，总长度:', fullContent.length)
               // 流结束，追加 citations 和检索详情
               const generationMs = Date.now() - startTime - retrievalResult.retrievalMs - retrievalResult.embeddingMs
               const citationsData = JSON.stringify({ 
