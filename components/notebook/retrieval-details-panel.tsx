@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ChunkCard } from './chunk-card'
 import { RetrievalFlowDiagram } from './retrieval-flow-diagram'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { AlertCircle, Settings2, BarChart3, ListFilter } from 'lucide-react'
+import { AlertCircle, Settings2, BarChart3, ListFilter, Search, Database } from 'lucide-react'
 
 interface RetrievalDetailsPanelProps {
   details: {
@@ -14,6 +14,8 @@ interface RetrievalDetailsPanelProps {
       sourceIds: string[]
       topK: number
       threshold: number
+      useHybridSearch?: boolean
+      retrievalType?: string
     }
     chunks: Array<{
       id: string
@@ -22,12 +24,17 @@ interface RetrievalDetailsPanelProps {
       score: number
       content: string
       metadata: { page?: number; url?: string }
+      scores?: {
+        vectorScore?: number
+        ftsScore?: number
+        combinedScore?: number
+      }
     }>
     timing: {
       embedding: number
       retrieval: number
-      generation: number
-      total: number
+      generation?: number
+      total?: number
     }
   }
 }
@@ -35,6 +42,7 @@ interface RetrievalDetailsPanelProps {
 export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
   const hasResults = details.chunks.length > 0
   const highConfidenceChunks = details.chunks.filter(c => c.score >= details.retrievalParams.threshold)
+  const useHybridSearch = details.retrievalParams.useHybridSearch || details.retrievalParams.retrievalType === 'hybrid'
 
   return (
     <div className="flex flex-col h-full max-h-[600px]">
@@ -42,6 +50,28 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
         <div className="flex items-center gap-2 mb-2">
           <Settings2 className="w-4 h-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">检索参数</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-4 text-[11px] mb-3">
+          <div className="space-y-1">
+            <span className="text-muted-foreground block">检索方式</span>
+            <span className="font-medium flex items-center gap-1">
+              {useHybridSearch ? (
+                <>
+                  <Search className="w-3 h-3" />
+                  混合检索
+                </>
+              ) : (
+                <>
+                  <Database className="w-3 h-3" />
+                  向量检索
+                </>
+              )}
+            </span>
+          </div>
+          <div className="space-y-1">
+            <span className="text-muted-foreground block">Top K</span>
+            <span className="font-medium block">{details.retrievalParams.topK}</span>
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-4 text-[11px]">
           <div className="space-y-1">
@@ -53,12 +83,12 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
             </span>
           </div>
           <div className="space-y-1">
-            <span className="text-muted-foreground block">Top K</span>
-            <span className="font-medium block">{details.retrievalParams.topK}</span>
-          </div>
-          <div className="space-y-1">
             <span className="text-muted-foreground block">相似度阈值</span>
             <span className="font-medium block">{details.retrievalParams.threshold}</span>
+          </div>
+          <div className="space-y-1">
+            <span className="text-muted-foreground block">返回片段</span>
+            <span className="font-medium block">{details.chunks.length} 个</span>
           </div>
         </div>
       </div>
@@ -105,7 +135,7 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
                 )}
                 <div className="grid gap-3">
                   {details.chunks.map((chunk) => (
-                    <ChunkCard key={chunk.id} chunk={chunk} />
+                    <ChunkCard key={chunk.id} chunk={chunk} showScores={useHybridSearch} />
                   ))}
                 </div>
               </div>

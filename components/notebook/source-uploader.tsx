@@ -24,9 +24,10 @@ import {
   CheckCircle2,
   Youtube,
   Globe,
-  AlertCircle,
+  Type,
 } from 'lucide-react'
 import { SourceSearchBox } from './add-source-dialog'
+import { useToast } from '@/hooks/use-toast'
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0]
 
@@ -65,12 +66,19 @@ export function AddSourceModal({
   const attachmentsRef = useRef<AttachmentsRef>(null)
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const { toast } = useToast()
   
   // URL 输入状态
   const [showUrlInput, setShowUrlInput] = useState(false)
   const [urlValue, setUrlValue] = useState('')
   const [urlLoading, setUrlLoading] = useState(false)
-  const [urlError, setUrlError] = useState('')
+
+  // 文字输入状态
+  const [showTextInput, setShowTextInput] = useState(false)
+  const [textTitle, setTextTitle] = useState('')
+  const [textContent, setTextContent] = useState('')
+  const [textLoading, setTextLoading] = useState(false)
+  const [textCharCount, setTextCharCount] = useState(0)
 
   const handleUpload = (file: FileType) => {
     const uid = file.uid || crypto.randomUUID()
@@ -152,15 +160,14 @@ export function AddSourceModal({
     try {
       const urlObj = new URL(url)
       if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-        setUrlError('仅支持 http/https 链接')
+        toast({ title: '格式错误', description: '仅支持 http/https 链接', variant: 'warning' })
         return
       }
     } catch {
-      setUrlError('请输入有效的网址')
+      toast({ title: '格式错误', description: '请输入有效的网址', variant: 'warning' })
       return
     }
 
-    setUrlError('')
     setUrlLoading(true)
 
     try {
@@ -187,16 +194,16 @@ export function AddSourceModal({
       fetch('/api/cron/process-queue?manual=true').catch(err => {
         console.error('触发处理队列失败:', err)
       })
-      
+
       // 如果有警告，显示一下
       if (data.warning) {
-        setUrlError(data.warning)
-        setTimeout(() => setUrlError(''), 3000)
+        toast({ title: '提示', description: data.warning, variant: 'warning' })
       }
 
+      toast({ title: '已添加来源', description: '网页链接已成功添加', variant: 'success' })
       onSuccess?.()
     } catch (err) {
-      setUrlError((err as Error).message)
+      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
     } finally {
       setUrlLoading(false)
     }
@@ -206,7 +213,73 @@ export function AddSourceModal({
     e.stopPropagation()
     e.preventDefault()
     setShowUrlInput(true)
-    setUrlError('')
+    setShowTextInput(false)
+  }
+
+  const handleTextClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setShowTextInput(true)
+    setShowUrlInput(false)
+  }
+
+  // 处理添加文字
+  const handleAddText = async () => {
+    const title = textTitle.trim()
+    const content = textContent.trim()
+
+    if (!title) {
+      toast({ title: '请输入标题', variant: 'warning' })
+      return
+    }
+
+    if (content.length < 10) {
+      toast({ title: '文字内容至少需要 10 个字符', variant: 'warning' })
+      return
+    }
+
+    if (content.length > 50000) {
+      toast({ title: '文字内容不能超过 50000 字符', variant: 'warning' })
+      return
+    }
+
+    setTextLoading(true)
+
+    try {
+      const response = await fetch('/api/sources/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          title,
+          content,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '添加失败')
+      }
+
+      // 成功后清空并关闭输入框
+      setTextTitle('')
+      setTextContent('')
+      setTextCharCount(0)
+      setShowTextInput(false)
+
+      // 添加成功后自动触发处理队列
+      fetch('/api/cron/process-queue?manual=true').catch(err => {
+        console.error('触发处理队列失败:', err)
+      })
+
+      toast({ title: '已添加来源', description: '文字内容已成功添加', variant: 'success' })
+      onSuccess?.()
+    } catch (err) {
+      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
+    } finally {
+      setTextLoading(false)
+    }
   }
 
   const progress = Math.round((currentSourceCount / maxSourceCount) * 100)
@@ -234,7 +307,7 @@ export function AddSourceModal({
 
           {/* 上传区域 - 居中显示，限制最大宽度 */}
           <div className="flex justify-center">
-            <div className="w-full max-w-md">
+            <div className="max-w-md">
               <Attachments
                 ref={attachmentsRef}
                 beforeUpload={handleUpload}
@@ -284,10 +357,10 @@ export function AddSourceModal({
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                      disabled
+                      className="h-10 gap-2 rounded-full border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      onClick={handleTextClick}
                     >
-                      <FileText className="h-4 w-4" />
+                      <Type className="h-4 w-4" />
                       复制的文字
                     </Button>
                   </div>
@@ -307,7 +380,6 @@ export function AddSourceModal({
                     value={urlValue}
                     onChange={(e) => {
                       setUrlValue(e.target.value)
-                      setUrlError('')
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
                     className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
@@ -333,18 +405,74 @@ export function AddSourceModal({
                     onClick={() => {
                       setShowUrlInput(false)
                       setUrlValue('')
-                      setUrlError('')
                     }}
                   >
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
-                {urlError && (
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-amber-600 dark:text-amber-400">{urlError}</p>
-                  </div>
-                )}
+              </div>
+            </div>
+          )}
+
+          {/* 文字输入区域 */}
+          {showTextInput && (
+            <div className="flex justify-center">
+              <div className="w-full max-w-md space-y-3">
+                <div className="flex gap-2 items-center">
+                  <Input
+                    placeholder="为这段文字起个标题"
+                    value={textTitle}
+                    onChange={(e) => {
+                      setTextTitle(e.target.value)
+                    }}
+                    className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                    autoFocus
+                  />
+                </div>
+                <div className="relative">
+                  <textarea
+                    placeholder="粘贴你复制的文字内容..."
+                    value={textContent}
+                    onChange={(e) => {
+                      setTextContent(e.target.value)
+                      setTextCharCount(e.target.value.length)
+                    }}
+                    className="w-full h-40 p-3 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="absolute bottom-2 right-2 text-xs text-slate-400">
+                    {textCharCount}/50000
+                  </span>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowTextInput(false)
+                      setTextTitle('')
+                      setTextContent('')
+                      setTextCharCount(0)
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleAddText}
+                    disabled={!textContent.trim() || textLoading || textCharCount < 10}
+                    className="h-9 px-4"
+                  >
+                    {textLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        添加中...
+                      </>
+                    ) : (
+                      '添加'
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
           )}

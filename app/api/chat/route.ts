@@ -8,26 +8,35 @@
 import { prisma } from '@/lib/db/prisma'
 import { Prisma } from '@prisma/client'
 import { getCurrentUserId } from '@/lib/db/supabase'
-import { zhipuConfig } from '@/lib/config'
+import { zhipuConfig, getModelConfig, type ModelProvider } from '@/lib/config'
 import {
   retrieveChunks,
+  hybridRetrieveChunks,
   deduplicateChunks,
   buildMessages,
   buildCitations,
   NO_EVIDENCE_RESPONSE,
+  RAG_CONFIG,
 } from '@/lib/rag'
 
 export async function POST(request: Request) {
   const startTime = Date.now()
 
   try {
-    const userId = await getCurrentUserId()
+    // 并行获取用户 ID 和解析请求体 (async-parallel)
+    const [userId, body] = await Promise.all([
+      getCurrentUserId(),
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
+
     if (!userId) {
       return new Response('未登录', { status: 401 })
     }
 
-    const body = await request.json()
-    const { messages, notebookId, selectedSourceIds } = body
+    const { messages, notebookId, selectedSourceIds, mode = 'fast' } = body
+    
+    // 获取对应模式的模型配置
+    const modelConfig = getModelConfig(mode)
 
     if (!notebookId) {
       return new Response('缺少 notebookId', { status: 400 })
@@ -55,8 +64,8 @@ export async function POST(request: Request) {
 
     const userQuestion = userMessage.content
 
-    // 保存用户消息
-    await prisma.message.create({
+    // 并行执行：保存用户消息 和 检索相关内容 (async-parallel)
+    const saveUserMessagePromise = prisma.message.create({
       data: {
         notebookId,
         role: 'user',
@@ -64,12 +73,24 @@ export async function POST(request: Request) {
       },
     })
 
-    // 1. 检索相关内容
-    const retrievalResult = await retrieveChunks({
-      notebookId,
-      query: userQuestion,
-      sourceIds: selectedSourceIds,
-    })
+    // 1. 检索相关内容（使用混合检索）
+    const useHybridSearch = RAG_CONFIG.useHybridSearch
+    const retrievalPromise = useHybridSearch
+      ? hybridRetrieveChunks({
+          notebookId,
+          query: userQuestion,
+          sourceIds: selectedSourceIds,
+        })
+      : retrieveChunks({
+          notebookId,
+          query: userQuestion,
+          sourceIds: selectedSourceIds,
+        })
+
+    const [, retrievalResult] = await Promise.all([
+      saveUserMessagePromise,
+      retrievalPromise
+    ])
 
     // 去重
     const chunks = deduplicateChunks(retrievalResult.chunks)
@@ -78,13 +99,14 @@ export async function POST(request: Request) {
     // 构造检索详情
     const retrievalDetails = {
       query: userQuestion,
-      queryEmbedding: retrievalResult.queryEmbedding,
       retrievalParams: {
         sourceIds: selectedSourceIds || [],
-        topK: 8,
-        threshold: 0.3,
+        topK: RAG_CONFIG.topK,
+        threshold: RAG_CONFIG.similarityThreshold,
+        useHybridSearch,
+        retrievalType: retrievalResult.retrievalType || 'vector',
       },
-      model: zhipuConfig.chatModel,
+      model: modelConfig.model,
       chunks: retrievalResult.chunks.map(c => ({
         id: c.id,
         sourceId: c.sourceId,
@@ -92,6 +114,7 @@ export async function POST(request: Request) {
         score: c.similarity,
         content: c.content,
         metadata: c.metadata,
+        scores: c.scores || null,
       })),
       timing: {
         embedding: retrievalResult.embeddingMs,
@@ -116,7 +139,7 @@ export async function POST(request: Request) {
             model: 'none',
             topK: chunks.length,
             chunkCount: 0,
-            retrievalDetails,
+            retrievalDetails: retrievalDetails as unknown as Prisma.InputJsonValue,
           },
         },
       })
@@ -143,15 +166,15 @@ export async function POST(request: Request) {
       chatHistory,
     })
 
-    // 4. 调用智谱 API 流式生成
-    const response = await fetch(`${zhipuConfig.baseUrl}/paas/v4/chat/completions`, {
+    // 4. 调用 API 流式生成
+    const response = await fetch(`${modelConfig.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${zhipuConfig.apiKey}`,
+        'Authorization': `Bearer ${modelConfig.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: zhipuConfig.chatModel,
+        model: modelConfig.model,
         messages: promptMessages,
         stream: true,
       }),
@@ -204,7 +227,7 @@ export async function POST(request: Request) {
                     retrievalMs: retrievalResult.retrievalMs,
                     embeddingMs: retrievalResult.embeddingMs,
                     generationMs,
-                    model: zhipuConfig.chatModel,
+                    model: modelConfig.model,
                     topK: chunks.length,
                     chunkCount: chunks.length,
                     retrievalDetails: {
@@ -214,7 +237,7 @@ export async function POST(request: Request) {
                         generation: generationMs,
                         total: Date.now() - startTime
                       }
-                    },
+                    } as unknown as Prisma.InputJsonValue,
                   },
                 },
               })

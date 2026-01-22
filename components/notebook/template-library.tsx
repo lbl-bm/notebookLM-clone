@@ -60,7 +60,7 @@ export function TemplateLibrary({
       console.error('加载模板失败:', error)
       toast({
         title: '加载模板失败',
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setIsLoading(false)
@@ -76,7 +76,7 @@ export function TemplateLibrary({
     if (!editingTemplate?.name || !editingTemplate?.template) {
       toast({
         title: '名称和内容不能为空',
-        variant: 'destructive',
+        variant: 'error',
       })
       return
     }
@@ -114,7 +114,7 @@ export function TemplateLibrary({
       console.error('保存模板失败:', error)
       toast({
         title: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setIsSaving(false)
@@ -142,7 +142,7 @@ export function TemplateLibrary({
       console.error('删除模板失败:', error)
       toast({
         title: '删除失败',
-        variant: 'destructive',
+        variant: 'error',
       })
     }
   }
@@ -177,7 +177,7 @@ export function TemplateLibrary({
       console.error('运行模板失败:', error)
       toast({
         title: (error as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setIsRunning(false)

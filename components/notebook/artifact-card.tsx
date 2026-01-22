@@ -20,8 +20,9 @@ import {
   Edit2,
   X
 } from 'lucide-react'
-import { Tooltip, Popconfirm, message } from 'antd'
+import { Tooltip, Popconfirm } from 'antd'
 import { Sparkles } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatDistanceToNow } = require('date-fns')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -59,6 +60,7 @@ export function ArtifactCard({ artifact, index, onDelete, onSelect, onTitleUpdat
   const [editTitle, setEditTitle] = useState(artifact.title || '')
   const inputRef = useRef<HTMLInputElement>(null)
   const config = typeConfig[artifact.type]
+  const { toast } = useToast()
 
   // 生成默认标题
   const defaultTitle = `${config.label} #${index + 1}`
@@ -88,9 +90,9 @@ export function ArtifactCard({ artifact, index, onDelete, onSelect, onTitleUpdat
         }
 
         onTitleUpdate(artifact.id, newTitle)
-        message.success('标题已更新')
+        toast({ title: '已更新', description: '标题已成功更新', variant: 'success' })
       } catch (error) {
-        message.error('更新标题失败')
+        toast({ title: '更新失败', description: '无法保存标题，请重试', variant: 'error' })
         if (process.env.NODE_ENV === 'development') {
           console.error(error)
         }
@@ -144,10 +146,10 @@ export function ArtifactCard({ artifact, index, onDelete, onSelect, onTitleUpdat
     try {
       await navigator.clipboard.writeText(artifact.content)
       setCopied(true)
-      message.success('已复制到剪贴板')
+      toast({ title: '已复制', description: '内容已复制到剪贴板', variant: 'success' })
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      message.error('复制失败')
+      toast({ title: '复制失败', description: '无法复制到剪贴板，请手动选择复制', variant: 'error' })
     }
   }
 

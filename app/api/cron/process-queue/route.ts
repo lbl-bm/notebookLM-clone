@@ -25,63 +25,51 @@ const RETRY_CONFIG = {
  * 获取下一个待处理的任务
  */
 async function getNextTask() {
-  // 查找 pending 状态且未超过重试次数的 Source
-  const source = await prisma.source.findFirst({
+  const job = await prisma.processingQueue.findFirst({
     where: {
       status: 'pending',
-      retryCount: { lt: RETRY_CONFIG.maxAttempts },
+      attempts: { lt: RETRY_CONFIG.maxAttempts },
     },
-    orderBy: [
-      { retryCount: 'asc' },  // 优先处理重试次数少的
-      { createdAt: 'asc' },   // 先进先出
-    ],
+    orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
   })
 
-  return source
-}
+  if (!job) return null
 
-/**
- * 更新队列记录
- */
-async function updateQueueRecord(
-  sourceId: string,
-  status: 'pending' | 'processing' | 'completed' | 'failed',
-  errorMessage?: string
-) {
-  // 查找或创建队列记录
-  const existing = await prisma.processingQueue.findFirst({
-    where: { sourceId },
+  const source = await prisma.source.findUnique({
+    where: { id: job.sourceId },
   })
 
-  if (existing) {
+  if (!source) {
     await prisma.processingQueue.update({
-      where: { id: existing.id },
+      where: { id: job.id },
       data: {
-        status,
-        errorMessage,
-        startedAt: status === 'processing' ? new Date() : existing.startedAt,
-        completedAt: status === 'completed' || status === 'failed' ? new Date() : null,
-        attempts: status === 'failed' ? existing.attempts + 1 : existing.attempts,
+        status: 'failed',
+        errorMessage: 'Source 不存在',
+        completedAt: new Date(),
+        attempts: job.attempts + 1,
       },
     })
-  } else {
-    await prisma.processingQueue.create({
-      data: {
-        sourceId,
-        status,
-        errorMessage,
-        startedAt: status === 'processing' ? new Date() : null,
-        completedAt: status === 'completed' || status === 'failed' ? new Date() : null,
-        attempts: status === 'failed' ? 1 : 0,
-      },
-    })
+    return null
   }
+
+  if (source.status !== 'pending') {
+    await prisma.processingQueue.update({
+      where: { id: job.id },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+      },
+    })
+    return null
+  }
+
+  return { source, job }
 }
 
 /**
  * 处理失败后的重试逻辑
  */
-async function handleFailure(sourceId: string, error: Error) {
+async function handleFailure(sourceId: string, queueId: bigint, error: Error) {
   const source = await prisma.source.findUnique({
     where: { id: sourceId },
   })
@@ -100,7 +88,15 @@ async function handleFailure(sourceId: string, error: Error) {
         errorMessage: error.message,
       },
     })
-    await updateQueueRecord(sourceId, 'failed', error.message)
+    await prisma.processingQueue.update({
+      where: { id: queueId },
+      data: {
+        status: 'failed',
+        errorMessage: error.message,
+        completedAt: new Date(),
+        attempts: { increment: 1 },
+      },
+    })
   } else {
     // 重置为 pending，等待下次重试
     await prisma.source.update({
@@ -111,7 +107,16 @@ async function handleFailure(sourceId: string, error: Error) {
         errorMessage: error.message,
       },
     })
-    await updateQueueRecord(sourceId, 'pending', error.message)
+    await prisma.processingQueue.update({
+      where: { id: queueId },
+      data: {
+        status: 'pending',
+        errorMessage: error.message,
+        startedAt: null,
+        completedAt: null,
+        attempts: { increment: 1 },
+      },
+    })
   }
 }
 
@@ -129,9 +134,9 @@ export async function GET(request: NextRequest) {
 
   try {
     // 获取下一个任务
-    const source = await getNextTask()
+    const task = await getNextTask()
 
-    if (!source) {
+    if (!task) {
       return NextResponse.json({
         success: true,
         message: '没有待处理的任务',
@@ -139,14 +144,28 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    const { source, job } = task
+
     // 更新队列状态
-    await updateQueueRecord(source.id, 'processing')
+    await prisma.processingQueue.update({
+      where: { id: job.id },
+      data: {
+        status: 'processing',
+        startedAt: new Date(),
+      },
+    })
 
     // 处理 Source
     await processSource(source.id)
 
     // 标记完成
-    await updateQueueRecord(source.id, 'completed')
+    await prisma.processingQueue.update({
+      where: { id: job.id },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+      },
+    })
 
     const duration = Date.now() - startTime
 
@@ -161,10 +180,13 @@ export async function GET(request: NextRequest) {
     const err = error as Error
     console.error('[Cron] 处理失败:', err)
 
-    // 如果有正在处理的 Source，处理失败逻辑
-    const source = await getNextTask()
-    if (source) {
-      await handleFailure(source.id, err)
+    const processingJob = await prisma.processingQueue.findFirst({
+      where: { status: 'processing' },
+      orderBy: [{ startedAt: 'desc' }, { createdAt: 'desc' }],
+    })
+
+    if (processingJob) {
+      await handleFailure(processingJob.sourceId, processingJob.id, err)
     }
 
     return NextResponse.json({

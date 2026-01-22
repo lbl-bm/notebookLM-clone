@@ -4,10 +4,13 @@
 
 export {
   retrieveChunks,
+  hybridRetrieveChunks,
   deduplicateChunks,
   RAG_CONFIG,
   type RetrievedChunk,
   type RetrievalResult,
+  type RetrievalType,
+  type RetrievalScores,
 } from './retriever'
 
 export {

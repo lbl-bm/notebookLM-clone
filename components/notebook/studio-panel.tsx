@@ -115,7 +115,7 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
       toast({
         title: '生成失败',
         description: (error as Error).message || '请重试',
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       clearInterval(interval)
@@ -147,7 +147,7 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
       console.error('删除失败:', error)
       toast({
         title: '删除失败',
-        variant: 'destructive',
+        variant: 'error',
       })
     }
   }

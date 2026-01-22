@@ -14,6 +14,7 @@ import { processWebpage, downloadPdfFromUrl, detectUrlType } from './web-parser'
 import { textSplitter, Chunk, countTokens } from './text-splitter'
 import { generateEmbeddings, ChunkWithEmbedding } from './embedding'
 import { EMBEDDING_DIM } from '@/lib/config'
+import { vectorStore } from '@/lib/db/vector-store'
 
 /**
  * 处理阶段
@@ -73,50 +74,6 @@ async function updateSourceStatus(
       updatedAt: new Date(),
     },
   })
-}
-
-/**
- * 获取已存在的 content_hash（用于去重）
- */
-async function getExistingHashes(sourceId: string): Promise<Set<string>> {
-  const existing = await prisma.$queryRaw<Array<{ content_hash: string }>>`
-    SELECT content_hash FROM document_chunks WHERE source_id = ${sourceId}::uuid
-  `
-  return new Set(existing.map(row => row.content_hash))
-}
-
-/**
- * 写入 chunks 到数据库
- */
-async function writeChunksToDb(
-  notebookId: string,
-  sourceId: string,
-  chunks: ChunkWithEmbedding[]
-): Promise<number> {
-  let inserted = 0
-
-  for (const chunk of chunks) {
-    await prisma.$executeRaw`
-      INSERT INTO document_chunks (
-        notebook_id, source_id, chunk_index, content, content_hash,
-        metadata, embedding, embedding_model, embedding_dim
-      ) VALUES (
-        ${notebookId}::uuid,
-        ${sourceId}::uuid,
-        ${chunk.chunkIndex},
-        ${chunk.content},
-        ${chunk.contentHash},
-        ${JSON.stringify(chunk.metadata)}::jsonb,
-        ${JSON.stringify(chunk.embedding)}::vector(1024),
-        'embedding-3',
-        ${EMBEDDING_DIM}
-      )
-      ON CONFLICT DO NOTHING
-    `
-    inserted++
-  }
-
-  return inserted
 }
 
 /**
@@ -194,7 +151,7 @@ export async function processPdfSource(sourceId: string): Promise<void> {
     await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
     const embedStart = Date.now()
     
-    const existingHashes = await getExistingHashes(sourceId)
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
     const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
       chunks,
       existingHashes
@@ -212,7 +169,11 @@ export async function processPdfSource(sourceId: string): Promise<void> {
     // 5. 写入数据库
     const indexStart = Date.now()
     
-    await writeChunksToDb(source.notebookId, sourceId, chunksWithEmbedding)
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
 
     log.stages.index = {
       status: 'success',
@@ -371,7 +332,7 @@ export async function processUrlSource(sourceId: string): Promise<void> {
     await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
     const embedStart = Date.now()
     
-    const existingHashes = await getExistingHashes(sourceId)
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
     const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
       chunks,
       existingHashes
@@ -389,7 +350,11 @@ export async function processUrlSource(sourceId: string): Promise<void> {
     // 5. 写入数据库
     const indexStart = Date.now()
     
-    await writeChunksToDb(source.notebookId, sourceId, chunksWithEmbedding)
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
 
     log.stages.index = {
       status: 'success',
@@ -447,8 +412,116 @@ export async function processSource(sourceId: string): Promise<void> {
     await processPdfSource(sourceId)
   } else if (source.type === 'url') {
     await processUrlSource(sourceId)
+  } else if (source.type === 'text') {
+    await processTextSource(sourceId)
   } else {
     throw new Error(`不支持的 Source 类型: ${source.type}`)
+  }
+}
+
+/**
+ * 处理复制的文字
+ * 状态流转：pending → chunking → embedding → ready
+ */
+export async function processTextSource(sourceId: string): Promise<void> {
+  const startTime = Date.now()
+  const log: ProcessingLog = { stages: {} }
+
+  try {
+    // 获取 Source 信息
+    const source = await prisma.source.findUnique({
+      where: { id: sourceId },
+      include: { notebook: true },
+    })
+
+    if (!source) {
+      throw new Error('Source 不存在')
+    }
+
+    // 从 meta 中获取文字内容
+    const meta = source.meta as { content?: string; charCount?: number; wordCount?: number } | null
+    const content = meta?.content
+
+    if (!content) {
+      throw new Error('文字内容不存在')
+    }
+
+    // 1. 切分阶段（跳过下载和解析）
+    await updateSourceStatus(sourceId, 'chunking', { processingLog: log })
+    const chunkStart = Date.now()
+    
+    const chunks = textSplitter.splitText(content, source.title, 'text')
+
+    const avgTokens = chunks.length > 0
+      ? Math.round(chunks.reduce((sum, c) => sum + c.metadata.tokenCount, 0) / chunks.length)
+      : 0
+
+    log.stages.chunk = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - chunkStart,
+      chunks: chunks.length,
+      avgTokens,
+      wordCount: meta?.wordCount || 0,
+    }
+
+    // 2. 向量化阶段
+    await updateSourceStatus(sourceId, 'embedding', { processingLog: log })
+    const embedStart = Date.now()
+    
+    const existingHashes = await vectorStore.getExistingHashes(sourceId)
+    const { chunksWithEmbedding, tokensUsed, skipped } = await generateEmbeddings(
+      chunks,
+      existingHashes
+    )
+
+    log.stages.embed = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - embedStart,
+      success: chunksWithEmbedding.length,
+      failed: skipped,
+      tokensUsed,
+    }
+
+    // 3. 写入数据库
+    const indexStart = Date.now()
+    
+    await vectorStore.addDocuments({
+      notebookId: source.notebookId,
+      sourceId,
+      chunks: chunksWithEmbedding
+    })
+
+    log.stages.index = {
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - indexStart,
+    }
+
+    // 完成
+    log.totalDuration = Date.now() - startTime
+
+    await updateSourceStatus(sourceId, 'ready', {
+      processingLog: log,
+      meta: {
+        ...(source.meta as object || {}),
+        charCount: content.length,
+        chunkCount: chunksWithEmbedding.length,
+        wordCount: meta?.wordCount || content.split(/\s+/).filter(Boolean).length,
+      },
+    })
+
+  } catch (error) {
+    const err = error as Error
+    log.totalDuration = Date.now() - startTime
+
+    await updateSourceStatus(sourceId, 'failed', {
+      errorMessage: err.message,
+      processingLog: log,
+    })
+
+    throw err
   }
 }
 
@@ -464,10 +537,8 @@ export async function deleteSourceWithCleanup(sourceId: string): Promise<void> {
     return
   }
 
-  // 1. 删除 chunks
-  await prisma.$executeRaw`
-    DELETE FROM document_chunks WHERE source_id = ${sourceId}::uuid
-  `
+  // 1. 删除 chunks (使用封装层)
+  await vectorStore.deleteDocuments(sourceId)
 
   // 2. 删除 Storage 文件
   if (source.storagePath) {

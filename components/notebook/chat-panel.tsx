@@ -11,10 +11,10 @@ import { Bubble, Sender } from '@ant-design/x'
 import { XMarkdown } from '@ant-design/x-markdown'
 import type { BubbleItemType } from '@ant-design/x'
 import { Card } from '@/components/ui/card'
-import { MessageSquare, FileText, Globe, User, Bot, AlertCircle } from 'lucide-react'
+import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target } from 'lucide-react'
 import { Avatar, Tooltip, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
-import { RetrievalDetailsPanel } from './retrieval-details-panel'
+import dynamic from 'next/dynamic'
 import {
   Sheet,
   SheetContent,
@@ -23,9 +23,23 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Search } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { availableModels } from '@/lib/config'
 
 // 引入 markdown 样式
 import '@ant-design/x-markdown/es/XMarkdown/index.css'
+
+// 动态导入 RetrievalDetailsPanel (bundle-dynamic-imports)
+const RetrievalDetailsPanel = dynamic(
+  () => import('./retrieval-details-panel').then(mod => mod.RetrievalDetailsPanel),
+  { loading: () => <div className="p-4 text-sm text-muted-foreground">加载详情中...</div> }
+)
 
 interface Message {
   id: string
@@ -49,7 +63,42 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [currentCitations, setCurrentCitations] = useState<Citation[]>([])
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const { selectCitationByIndex, setCitations } = useCitation()
+  const [chatMode, setChatModeState] = useState<'fast' | 'precise'>('fast')
+  const setChatMode = useCallback((value: 'fast' | 'precise') => {
+    setChatModeState(value)
+    localStorage.setItem('chat-model', value)
+  }, [])
+
+  useEffect(() => {
+    const stored = localStorage.getItem('chat-model')
+    if (stored === 'fast' || stored === 'precise') {
+      setChatModeState(stored)
+    }
+  }, [])
+
+  // 加载建议问题
+  useEffect(() => {
+    // 只有在没有消息时才加载建议问题
+    if (messages.length > 0) return
+
+    const fetchSuggestions = async () => {
+      try {
+        const res = await fetch(`/api/notebooks/${notebookId}/suggest`, {
+          method: 'POST',
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setSuggestedQuestions(data.questions || [])
+        }
+      } catch (error) {
+        console.error('Failed to fetch suggestions:', error)
+      }
+    }
+
+    fetchSuggestions()
+  }, [notebookId, messages.length])
 
   // 当 currentCitations 变化时，更新 context
   useEffect(() => {
@@ -59,8 +108,8 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     }
   }, [currentCitations, setCitations])
 
-  // 转换为 Bubble.List 的 items 格式
-  const bubbleItems: BubbleItemType[] = messages.map((msg) => {
+  // 转换为 Bubble.List 的 items 格式 (rerender-memo)
+  const bubbleItems: BubbleItemType[] = useMemo(() => messages.map((msg) => {
     // 判断是否为无依据回复
     const isNoEvidence = msg.answerMode === 'no_evidence'
     const citations = msg.citations as Citation[] | undefined
@@ -109,7 +158,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       loading: msg.role === 'assistant' && !msg.content && isLoading,
       footer,
     }
-  })
+  }), [messages, isLoading])
 
   // 自动滚动到底部
   useEffect(() => {
@@ -154,6 +203,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
           })),
           notebookId,
           selectedSourceIds,
+          mode: chatMode,
         }),
       })
 
@@ -238,7 +288,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, notebookId, selectedSourceIds])
+  }, [isLoading, messages, notebookId, selectedSourceIds, chatMode])
 
   // Markdown 渲染器 - 支持内联引用标记
   const renderMarkdown = useCallback((content: string, citations?: Citation[]) => {
@@ -256,25 +306,26 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     )
   }, [selectCitationByIndex])
 
-  // 角色配置
-  const roles = {
+  // 角色配置 (rerender-memo)
+  const roles = useMemo(() => ({
     user: {
       placement: 'end' as const,
       variant: 'filled' as const,
-      avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: '#1677ff' }} />,
+      avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: 'hsl(var(--muted))', color: 'hsl(var(--foreground))' }} />,
       styles: {
         content: {
-          backgroundColor: '#1677ff',
-          color: 'white',
+          backgroundColor: 'hsl(var(--muted))',
+          color: 'hsl(var(--foreground))',
           padding: '12px 16px',
-          borderRadius: '16px',
+          borderRadius: '12px',
+          boxShadow: 'none',
         },
       },
     },
     ai: {
       placement: 'start' as const,
       variant: 'outlined' as const,
-      avatar: <Avatar icon={<Bot size={16} />} style={{ backgroundColor: '#f5f5f5', color: '#666' }} />,
+      avatar: <Avatar icon={<Bot size={16} />} style={{ backgroundColor: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }} />,
       contentRender: (content: string, info: { key?: string | number }) => {
         // 找到对应的消息获取 citations
         const msg = messages.find(m => m.id === info.key)
@@ -282,22 +333,26 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       },
       styles: {
         content: {
-          backgroundColor: '#fafafa',
-          border: '1px solid #e8e8e8',
-          padding: '12px 16px',
-          borderRadius: '16px',
+          backgroundColor: 'transparent',
+          border: 'none',
+          padding: '0 16px',
+          borderRadius: '0',
           maxWidth: '100%',
+          boxShadow: 'none',
         },
       },
     },
-  }
+  }), [messages, renderMarkdown])
 
   return (
     <Card className="h-full flex flex-col shadow-sm overflow-hidden">
       {/* 消息列表 - 固定高度，内部滚动 */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {messages.length === 0 ? (
-          <EmptyState />
+          <EmptyState 
+            suggestedQuestions={suggestedQuestions} 
+            onQuestionClick={handleSubmit} 
+          />
         ) : (
           <Bubble.List
             ref={listRef}
@@ -322,6 +377,13 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       {/* 输入框 */}
       <div className="flex-shrink-0 border-t p-4 bg-slate-50 dark:bg-slate-900/50">
         <div className="max-w-3xl mx-auto">
+          <div className="flex items-center justify-end mb-2">
+            <ModelSelector
+              value={chatMode}
+              onChange={(value) => setChatMode(value as 'fast' | 'precise')}
+              disabled={isLoading}
+            />
+          </div>
           <Sender
             value={input}
             onChange={setInput}
@@ -340,19 +402,66 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   )
 }
 
+function ModelSelector({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <div className="w-[160px]">
+      <Select value={value} onValueChange={onChange} disabled={!!disabled}>
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue placeholder="选择模型" />
+        </SelectTrigger>
+        <SelectContent>
+          {availableModels.map((model) => (
+            <SelectItem key={model.id} value={model.id}>
+              <span className="flex items-center gap-1">
+                {model.icon === 'zap' ? (
+                  <Zap className="h-3 w-3 text-yellow-500" />
+                ) : (
+                  <Target className="h-3 w-3 text-blue-500" />
+                )}
+                {model.displayName}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 /**
  * 空状态
  */
-function EmptyState() {
+function EmptyState({ 
+  suggestedQuestions = [], 
+  onQuestionClick 
+}: { 
+  suggestedQuestions?: string[]
+  onQuestionClick: (q: string) => void
+}) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center p-4">
       <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
         <MessageSquare className="w-8 h-8 text-slate-400" />
       </div>
       <h3 className="text-lg font-medium mb-2 text-slate-900 dark:text-slate-50">开始对话</h3>
-      <p className="text-slate-500 max-w-sm">
+      <p className="text-slate-500 max-w-sm mb-8">
         添加资料后，你可以向 AI 提问关于这些资料的任何问题
       </p>
+
+      {/* 建议问题 */}
+      {suggestedQuestions.length > 0 && (
+        <div className="flex flex-col gap-2 max-w-md w-full">
+          {suggestedQuestions.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => onQuestionClick(q)}
+              className="text-sm text-left px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-sm"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -393,12 +502,12 @@ function CitationCard({ citation, onClick }: { citation: Citation; onClick: () =
       onClick={onClick}
       className={`flex items-start gap-2 p-2 bg-white rounded-lg border text-xs max-w-[260px] cursor-pointer transition-all ${
         isHighlighted 
-          ? 'border-blue-400 ring-2 ring-blue-100 shadow-sm' 
-          : 'border-slate-200 hover:border-blue-300 hover:shadow-sm'
+          ? 'border-orange-400 ring-2 ring-orange-100 shadow-sm' 
+          : 'border-slate-200 hover:border-orange-300 hover:shadow-sm'
       }`}
     >
       <div className="flex items-center gap-1">
-        <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-medium">
+        <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded-full flex items-center justify-center text-xs font-medium">
           {citation.index}
         </span>
       </div>
@@ -408,7 +517,7 @@ function CitationCard({ citation, onClick }: { citation: Citation; onClick: () =
           <span className="font-medium text-slate-700 truncate">
             {citation.sourceTitle}
           </span>
-          <span className="text-blue-500 flex-shrink-0 font-medium">{similarity}%</span>
+          <span className="text-orange-500 flex-shrink-0 font-medium">{similarity}%</span>
         </div>
         {citation.metadata.page && (
           <span className="text-slate-400">第 {citation.metadata.page} 页</span>
@@ -517,7 +626,7 @@ function processTextWithCitations(
                 e.stopPropagation()
                 onCitationClick(index)
               }}
-              className="inline-flex items-center justify-center w-5 h-5 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-full mx-0.5 cursor-pointer transition-colors"
+              className="inline-flex items-center justify-center w-5 h-5 text-xs font-medium text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-full mx-0.5 cursor-pointer transition-colors"
               style={{ fontSize: '10px', lineHeight: 1, verticalAlign: 'super' }}
             >
               {index}

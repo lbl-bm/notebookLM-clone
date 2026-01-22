@@ -5,14 +5,26 @@
 
 // 向量维度配置（必须与数据库 vector(D) 一致！）
 export const EMBEDDING_DIM = parseInt(process.env.EMBEDDING_DIM || '1024')
-const EXPECTED_DIM = 1024 // 与 Prisma migration 中的维度一致
 
-// 🔴 架构风险 8.1: 启动时强制检查维度一致性
-if (EMBEDDING_DIM !== EXPECTED_DIM) {
+// ✅ P0-5: 启动时强化维度校验
+if (isNaN(EMBEDDING_DIM) || EMBEDDING_DIM <= 0) {
   throw new Error(
-    `❌ 向量维度不一致！EMBEDDING_DIM (${EMBEDDING_DIM}) 必须等于 ${EXPECTED_DIM}。` +
-    `\n请检查 .env.local 文件和数据库 schema。` +
-    `\n详见 PROJECT_SPEC.md 第 8.1 章。`
+    `❌ 向量维度配置无效！EMBEDDING_DIM (${EMBEDDING_DIM}) 必须为正整数。` +
+    `\n请检查 .env.local 文件。`
+  )
+}
+
+// ✅ P0-5: 强制锁定维度为 1024（智谱 embedding-3）
+const REQUIRED_DIM = 1024
+if (EMBEDDING_DIM !== REQUIRED_DIM) {
+  throw new Error(
+    `❌ 向量维度配置错误！\n` +
+    `当前系统仅支持 ${REQUIRED_DIM} 维向量（智谱 AI embedding-3 模型）。\n` +
+    `您的配置: EMBEDDING_DIM=${EMBEDDING_DIM}\n\n` +
+    `修复方法：\n` +
+    `1. 在 .env.local 中设置 EMBEDDING_DIM=${REQUIRED_DIM}\n` +
+    `2. 如需使用其他模型，请执行数据库迁移重建 document_chunks 表\n` +
+    `3. 参考文档：docs/VECTOR_DATABASE.md`
   )
 }
 
@@ -30,6 +42,83 @@ export const zhipuConfig = {
   embeddingModel: process.env.ZHIPU_EMBEDDING_MODEL || 'embedding-3',
   chatModel: process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
   studioModel: process.env.ZHIPU_STUDIO_MODEL || process.env.ZHIPU_CHAT_MODEL || 'glm-4-flash',
+}
+
+// LongCat 配置
+export const longcatConfig = {
+  apiKey: process.env.LONGCAT_API_KEY!,
+  baseUrl: process.env.LONGCAT_BASE_URL || 'https://api.longcat.chat/openai',
+  chatModel: process.env.LONGCAT_CHAT_MODEL || 'LongCat-Flash-Thinking',
+}
+
+// 模型提供商配置
+export type ModelProvider = 'zhipu' | 'longcat'
+
+export const STUDIO_DEFAULT_MODEL: ModelProvider = 'longcat'
+
+export interface ModelConfig {
+  id: string
+  provider: ModelProvider
+  model: string
+  displayName: string
+  description: string
+  icon: 'zap' | 'target'
+}
+
+export const availableModels: ModelConfig[] = [
+  {
+    id: 'fast',
+    provider: 'zhipu',
+    model: zhipuConfig.chatModel,
+    displayName: '快速模式 (GLM-4)',
+    description: '智能采样，5-15秒',
+    icon: 'zap',
+  },
+  {
+    id: 'precise',
+    provider: 'longcat',
+    model: longcatConfig.chatModel,
+    displayName: '精准模式 (LongCat)',
+    description: 'Map-Reduce，30-90秒',
+    icon: 'target',
+  },
+]
+
+// 获取模型配置
+export function getModelConfig(mode: 'fast' | 'precise' = 'fast') {
+  const selected = availableModels.find(m => m.id === mode) || availableModels[0]
+  
+  if (selected.provider === 'longcat') {
+    return {
+      apiKey: longcatConfig.apiKey,
+      baseUrl: longcatConfig.baseUrl,
+      model: longcatConfig.chatModel,
+      provider: 'longcat' as const,
+    }
+  }
+  return {
+    apiKey: zhipuConfig.apiKey,
+    baseUrl: zhipuConfig.baseUrl,
+    model: zhipuConfig.chatModel,
+    provider: 'zhipu' as const,
+  }
+}
+
+export function getStudioModelConfig() {
+  if (STUDIO_DEFAULT_MODEL === 'longcat') {
+    return {
+      apiKey: longcatConfig.apiKey,
+      baseUrl: longcatConfig.baseUrl,
+      model: longcatConfig.chatModel,
+      provider: 'longcat' as const,
+    }
+  }
+  return {
+    apiKey: zhipuConfig.apiKey,
+    baseUrl: zhipuConfig.baseUrl,
+    model: zhipuConfig.studioModel,
+    provider: 'zhipu' as const,
+  }
 }
 
 // 应用配置

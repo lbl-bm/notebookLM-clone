@@ -64,7 +64,7 @@ export interface ChunkMetadata {
   endChar: number         // 结束字符位置
   tokenCount: number      // token 数量
   sourceTitle: string     // 来源标题
-  sourceType: string      // 来源类型 'file' | 'url'
+  sourceType: string      // 来源类型 'file' | 'url' | 'text'
 }
 
 /**
@@ -97,7 +97,7 @@ export class RecursiveTextSplitter {
   splitText(
     text: string,
     sourceTitle: string,
-    sourceType: 'file' | 'url',
+    sourceType: 'file' | 'url' | 'text',
     pageInfo?: { page: number; startChar: number }[]
   ): Chunk[] {
     const chunks: Chunk[] = []
@@ -229,7 +229,7 @@ export class RecursiveTextSplitter {
     content: string,
     startChar: number,
     sourceTitle: string,
-    sourceType: 'file' | 'url',
+    sourceType: 'file' | 'url' | 'text',
     chunkIndex: number,
     pageInfo?: { page: number; startChar: number }[]
   ): Chunk {

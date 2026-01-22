@@ -3,7 +3,7 @@
  * US-008: Studio 动作生成产物
  */
 
-import { zhipuConfig } from '@/lib/config'
+import { getStudioModelConfig } from '@/lib/config'
 import { 
   getPrompt, 
   MAP_PROMPTS, 
@@ -24,6 +24,11 @@ const MAX_OUTPUT_TOKENS = 4096  // 增加 token 限制，推理模型需要更�
 const TIMEOUT_FAST = 90000     // 快速模式 90 秒（推理模型需要更长时间）
 const TIMEOUT_PRECISE = 180000 // 精准模式 180 秒
 const TIMEOUT_MAP_STEP = 45000 // Map 步骤 45 秒
+
+const studioModelConfig = getStudioModelConfig()
+const studioChatUrl = studioModelConfig.provider === 'zhipu'
+  ? `${studioModelConfig.baseUrl}/paas/v4/chat/completions`
+  : `${studioModelConfig.baseUrl}/chat/completions`
 
 export type StudioMode = 'fast' | 'precise'
 
@@ -48,14 +53,14 @@ async function callLLM(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(`${zhipuConfig.baseUrl}/paas/v4/chat/completions`, {
+    const response = await fetch(studioChatUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${zhipuConfig.apiKey}`,
+        'Authorization': `Bearer ${studioModelConfig.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: zhipuConfig.studioModel,
+        model: studioModelConfig.model,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: MAX_OUTPUT_TOKENS,
       }),

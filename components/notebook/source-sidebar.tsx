@@ -5,11 +5,19 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { Plus, X, FileText, Globe, ChevronLeft } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { SourceCard } from './source-card'
 import { SourceSearchBox } from './add-source-dialog'
 import { AddSourceModal } from './source-uploader'
@@ -21,6 +29,12 @@ interface Source {
   title: string
   status: string
   meta: unknown
+  queueStatus?: string | null
+  queuePriority?: number | null
+  queueAttempts?: number | null
+  queueErrorMessage?: string | null
+  queuedAt?: Date | string | null
+  queuePosition?: number | null
   createdAt: Date
 }
 
@@ -30,60 +44,140 @@ interface SourceSidebarProps {
 }
 
 // 处理中的状态列表
-const PROCESSING_STATUSES = ['pending', 'downloading', 'fetching', 'parsing', 'chunking', 'embedding']
+const ACTIVE_PROCESSING_STATUSES = ['downloading', 'fetching', 'parsing', 'chunking', 'embedding']
 
 export function SourceSidebar({ notebookId, sources: initialSources }: SourceSidebarProps) {
   const router = useRouter()
   const { toast } = useToast()
   const { highlightedSourceId, selectedCitation, selectCitation } = useCitation()
   const [showModal, setShowModal] = useState(false)
+  const [showQueueDialog, setShowQueueDialog] = useState(false)
   const [sources, setSources] = useState(initialSources)
+  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(new Set())
+  const sourceRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   // 检查是否有正在处理的 Source
-  const hasProcessingSources = sources.some(s => PROCESSING_STATUSES.includes(s.status))
+  const hasActiveProcessingSources = sources.some(s => ACTIVE_PROCESSING_STATUSES.includes(s.status))
+  const hasQueuedPendingSources = sources.some(s => s.status === 'pending' && s.queueStatus === 'pending')
 
   // 轮询刷新状态
   useEffect(() => {
-    if (!hasProcessingSources) return
+    if (!hasActiveProcessingSources && !hasQueuedPendingSources) return
+
+    const intervalMs = hasActiveProcessingSources ? 5000 : 15000
 
     const interval = setInterval(() => {
-      router.refresh()
-    }, 3000) // 每 3 秒刷新一次
+      // 只有在页面可见时才刷新
+      if (document.visibilityState === 'visible') {
+        router.refresh()
+      }
+    }, intervalMs)
 
     return () => clearInterval(interval)
-  }, [hasProcessingSources, router])
+  }, [hasActiveProcessingSources, hasQueuedPendingSources, router])
 
   // 同步 props 更新
   useEffect(() => {
     setSources(initialSources)
   }, [initialSources])
 
-  const handleAddSuccess = () => {
+  const handleAddSuccess = useCallback(() => {
     toast({
       title: '添加成功',
       description: '来源已添加，正在处理中...',
     })
     router.refresh()
-  }
+  }, [toast, router])
 
-  const handleModalSuccess = () => {
+  const handleModalSuccess = useCallback(() => {
     setShowModal(false)
     handleAddSuccess()
-  }
+  }, [handleAddSuccess])
 
-  const handleSourceDelete = () => {
+  const handleSourceDelete = useCallback(() => {
     router.refresh()
-  }
+  }, [router])
 
-  // 如果有选中的引用，显示引用详情视图
-  if (selectedCitation) {
-    return (
-      <CitationDetailView 
-        citation={selectedCitation} 
-        onBack={() => selectCitation(null)} 
-      />
-    )
-  }
+  const queuedSources = sources
+    .filter(s => s.queueStatus === 'pending' || s.queueStatus === 'processing')
+    .sort((a, b) => (a.queuePosition ?? Number.POSITIVE_INFINITY) - (b.queuePosition ?? Number.POSITIVE_INFINITY))
+
+  const handleProcessNow = useCallback(async (sourceId: string, title: string) => {
+    try {
+      const res = await fetch(`/api/sources/${sourceId}/process`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || '处理失败')
+      }
+      toast({ title: '已开始处理', description: `"${title}" 正在处理...` })
+      router.refresh()
+    } catch (error) {
+      toast({
+        title: '处理失败',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    }
+  }, [router, toast])
+
+  const handleCancelQueue = useCallback(async (sourceId: string, title: string) => {
+    try {
+      const res = await fetch(`/api/sources/${sourceId}/cancel`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || '取消失败')
+      }
+      toast({ title: '已取消排队', description: `"${title}" 已从队列移除` })
+      router.refresh()
+    } catch (error) {
+      toast({
+        title: '取消失败',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    }
+  }, [router, toast])
+
+  // 监听 selectedCitation 变化，自动滚动到对应 Source
+  useEffect(() => {
+    if (!selectedCitation) return
+
+    const targetSourceId = selectedCitation.sourceId
+    const sourceElement = sourceRefs.current.get(targetSourceId)
+
+    if (sourceElement) {
+      // 展开对应的 Source
+      setExpandedSourceIds(prev => new Set(prev).add(targetSourceId))
+
+      // 平滑滚动到 Source 位置
+      setTimeout(() => {
+        sourceElement.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        })
+      }, 100)
+    }
+  }, [selectedCitation])
+
+  const handleSourceRefUpdate = useCallback((sourceId: string, element: HTMLDivElement | null) => {
+    if (element) {
+      sourceRefs.current.set(sourceId, element)
+    } else {
+      sourceRefs.current.delete(sourceId)
+    }
+  }, [])
+
+  const toggleSourceExpanded = useCallback((sourceId: string) => {
+    setExpandedSourceIds(prev => {
+      const next = new Set(prev)
+      if (next.has(sourceId)) {
+        next.delete(sourceId)
+      } else {
+        next.add(sourceId)
+      }
+      return next
+    })
+  }, [])
 
   return (
     <>
@@ -91,9 +185,19 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
       <div className="p-4 border-b border-slate-200 dark:border-slate-700">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-base text-slate-900 dark:text-slate-50">来源</h2>
-          <span className="text-xs text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-            {sources.length}
-          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setShowQueueDialog(true)}
+            >
+              队列 {queuedSources.length}
+            </Button>
+            <span className="text-xs text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+              {sources.length}
+            </span>
+          </div>
         </div>
 
         {/* 添加来源按钮 - 点击打开模态框 */}
@@ -132,8 +236,13 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
               <SourceCard
                 key={source.id}
                 source={source}
+                notebookId={notebookId}
                 onDelete={handleSourceDelete}
                 isHighlighted={highlightedSourceId === source.id}
+                isExpanded={expandedSourceIds.has(source.id)}
+                onToggleExpanded={() => toggleSourceExpanded(source.id)}
+                onRefUpdate={handleSourceRefUpdate}
+                selectedCitationId={selectedCitation?.id}
               />
             ))}
           </div>
@@ -149,87 +258,52 @@ export function SourceSidebar({ notebookId, sources: initialSources }: SourceSid
         maxSourceCount={50}
         onSuccess={handleModalSuccess}
       />
-    </>
-  )
-}
 
-/**
- * 引用详情视图 - 在边栏中展示
- */
-function CitationDetailView({ 
-  citation, 
-  onBack 
-}: { 
-  citation: NonNullable<ReturnType<typeof useCitation>['selectedCitation']>
-  onBack: () => void 
-}) {
-  const Icon = citation.sourceType === 'file' ? FileText : Globe
-  const similarity = Math.round(citation.similarity * 100)
+      <Dialog open={showQueueDialog} onOpenChange={setShowQueueDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>处理队列</DialogTitle>
+            <DialogDescription>仅展示当前 Notebook 的排队任务</DialogDescription>
+          </DialogHeader>
 
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-3 transition-colors"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          返回来源列表
-        </button>
-        
-        <div className="flex items-start gap-3">
-          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-            citation.sourceType === 'file' 
-              ? 'bg-red-100 dark:bg-red-900/30' 
-              : 'bg-blue-100 dark:bg-blue-900/30'
-          }`}>
-            <Icon className={`w-5 h-5 ${
-              citation.sourceType === 'file' 
-                ? 'text-red-600 dark:text-red-400' 
-                : 'text-blue-600 dark:text-blue-400'
-            }`} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="font-medium text-slate-900 dark:text-slate-100 truncate">
-              {citation.sourceTitle}
-            </h3>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded-full font-medium">
-                相关度 {similarity}%
-              </span>
-              {citation.metadata.page && (
-                <span className="text-xs text-slate-500">
-                  第 {citation.metadata.page} 页
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 引用内容 */}
-      <div className="flex-1 overflow-auto p-4">
-        <div className="space-y-3">
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-            引用片段
-          </div>
-          <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-              {citation.content}
-            </p>
-          </div>
-          
-          {/* 位置信息 */}
-          <div className="flex items-center gap-4 text-xs text-slate-500 pt-2">
-            <span>片段 #{citation.metadata.chunkIndex + 1}</span>
-            {citation.metadata.page && (
-              <span>第 {citation.metadata.page} 页</span>
+          <div className="py-2 space-y-2 max-h-[360px] overflow-auto">
+            {queuedSources.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center">暂无排队任务</div>
+            ) : (
+              queuedSources.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{s.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {s.queueStatus === 'processing'
+                        ? '处理中'
+                        : s.queuePosition
+                          ? `队列第 ${s.queuePosition} 位`
+                          : '队列中'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {s.queueStatus === 'pending' && (
+                      <>
+                        <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleProcessNow(s.id, s.title)}>
+                          立即处理
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleCancelQueue(s.id, s.title)}>
+                          取消
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
             )}
-            <span>字符 {citation.metadata.startChar}-{citation.metadata.endChar}</span>
           </div>
-        </div>
-      </div>
-    </div>
+
+          <DialogFooter>
+            <Button variant="outline" className="w-full" onClick={() => setShowQueueDialog(false)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

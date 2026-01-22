@@ -127,7 +127,7 @@ export function NotebookCard({ notebook }: NotebookCardProps) {
       toast({
         title: '删除失败',
         description: (err as Error).message,
-        variant: 'destructive',
+        variant: 'error',
       })
     } finally {
       setLoading(false)

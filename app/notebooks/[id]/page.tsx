@@ -51,6 +51,49 @@ export default async function NotebookDetailPage({ params }: PageProps) {
     redirect('/403')
   }
 
+  const sourceIds = notebook.sources.map(s => s.id)
+  const queueRows = sourceIds.length > 0
+    ? await prisma.processingQueue.findMany({
+      where: { sourceId: { in: sourceIds } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    })
+    : []
+
+  const latestQueueBySourceId = new Map<string, typeof queueRows[number]>()
+  for (const row of queueRows) {
+    if (!latestQueueBySourceId.has(row.sourceId)) {
+      latestQueueBySourceId.set(row.sourceId, row)
+    }
+  }
+
+  const pendingQueue = Array.from(latestQueueBySourceId.values())
+    .filter(r => r.status === 'pending')
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return b.priority - a.priority
+      return a.createdAt.getTime() - b.createdAt.getTime()
+    })
+
+  const queuePositionBySourceId = new Map<string, number>()
+  pendingQueue.forEach((r, index) => {
+    queuePositionBySourceId.set(r.sourceId, index + 1)
+  })
+
+  const notebookWithQueue = {
+    ...notebook,
+    sources: notebook.sources.map(s => {
+      const q = latestQueueBySourceId.get(s.id)
+      return {
+        ...s,
+        queueStatus: q?.status ?? null,
+        queuePriority: q?.priority ?? null,
+        queueAttempts: q?.attempts ?? null,
+        queueErrorMessage: q?.errorMessage ?? null,
+        queuedAt: q?.createdAt ?? null,
+        queuePosition: queuePositionBySourceId.get(s.id) ?? null,
+      }
+    }),
+  }
+
   // 更新最近打开时间
   await prisma.notebook.update({
     where: { id },
@@ -78,7 +121,7 @@ export default async function NotebookDetailPage({ params }: PageProps) {
       </header>
 
       {/* Main Content */}
-      <NotebookContent notebook={notebook} />
+      <NotebookContent notebook={notebookWithQueue} />
     </div>
   )
 }

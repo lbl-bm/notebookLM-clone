@@ -19,6 +19,12 @@ interface Source {
   title: string
   status: string
   meta: unknown
+  queueStatus?: string | null
+  queuePriority?: number | null
+  queueAttempts?: number | null
+  queueErrorMessage?: string | null
+  queuedAt?: Date | string | null
+  queuePosition?: number | null
   createdAt: Date
 }
 

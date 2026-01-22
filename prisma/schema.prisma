@@ -25,8 +25,6 @@ model Notebook {
   sources              Source[]
   messages             Message[]
   artifacts            Artifact[]
-  suggestedQuestions   SuggestedQuestion[]
-
   @@index([ownerId])
   @@index([lastOpenedAt])
   @@map("notebooks")
@@ -101,6 +99,7 @@ model Artifact {
 model PromptTemplate {
   id          String   @id @default(uuid())
   ownerId     String   // Supabase Auth user id
+  notebookId  String?  // 可选关联到特定 Notebook，如果不关联则为用户全局模板
   name        String
   description String?
   template    String   @db.Text // 包含 {{variable}} 占位符
@@ -110,6 +109,7 @@ model PromptTemplate {
   updatedAt   DateTime @updatedAt
 
   @@index([ownerId])
+  @@index([notebookId])
   @@index([isSystem])
   @@map("prompt_templates")
 }
@@ -131,25 +131,6 @@ model ProcessingQueue {
 
   @@index([status, priority, createdAt])
   @@map("processing_queue")
-}
-
-// ============================================
-// 建议问题表（ROADMAP Week 2）
-// ============================================
-
-model SuggestedQuestion {
-  id         String   @id @default(uuid())
-  notebookId String
-  question   String   @db.Text
-  isUsed     Boolean  @default(false) // 用户是否已点击使用此问题
-  createdAt  DateTime @default(now())
-
-  // 关联
-  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
-
-  @@index([notebookId])
-  @@index([createdAt])
-  @@map("suggested_questions")
 }
 
 // ============================================
