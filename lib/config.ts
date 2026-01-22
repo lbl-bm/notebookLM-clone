@@ -105,19 +105,12 @@ export function getModelConfig(mode: 'fast' | 'precise' = 'fast') {
 }
 
 export function getStudioModelConfig() {
-  if (STUDIO_DEFAULT_MODEL === 'longcat') {
-    return {
-      apiKey: longcatConfig.apiKey,
-      baseUrl: longcatConfig.baseUrl,
-      model: longcatConfig.chatModel,
-      provider: 'longcat' as const,
-    }
-  }
+  // 强制使用 LongCat 配置
   return {
-    apiKey: zhipuConfig.apiKey,
-    baseUrl: zhipuConfig.baseUrl,
-    model: zhipuConfig.studioModel,
-    provider: 'zhipu' as const,
+    apiKey: longcatConfig.apiKey,
+    baseUrl: longcatConfig.baseUrl,
+    model: longcatConfig.chatModel,
+    provider: 'longcat' as const,
   }
 }
 
