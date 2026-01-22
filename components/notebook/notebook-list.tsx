@@ -33,7 +33,7 @@ export function NotebookList({ notebooks }: NotebookListProps) {
         </div>
         <h3 className="text-lg font-medium mb-2">还没有知识库</h3>
         <p className="text-muted-foreground max-w-sm">
-          点击右上角的"新建知识库"按钮，开始创建你的第一个 AI 知识库
+          点击右上角的&quot;新建知识库&quot;按钮，开始创建你的第一个 AI 知识库
         </p>
       </div>
     )

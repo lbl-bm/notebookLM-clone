@@ -23,10 +23,8 @@ import {
 import { Tooltip, Popconfirm } from 'antd'
 import { Sparkles } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { formatDistanceToNow } = require('date-fns')
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { zhCN } = require('date-fns/locale')
+import { formatDistanceToNow } from 'date-fns'
+import { zhCN } from 'date-fns/locale'
 
 export type ArtifactType = 'summary' | 'outline' | 'quiz' | 'mindmap' | 'custom'
 
