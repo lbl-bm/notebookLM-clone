@@ -93,8 +93,8 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
         </div>
       </div>
 
-      <Tabs defaultValue="chunks" className="flex-1 flex flex-col">
-        <div className="px-4 border-b">
+      <Tabs defaultValue="chunks" className="flex-1 flex flex-col min-h-0">
+        <div className="px-4 border-b flex-shrink-0">
           <TabsList className="h-10 w-full justify-start bg-transparent p-0 gap-4">
             <TabsTrigger 
               value="chunks" 
@@ -113,8 +113,8 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
           </TabsList>
         </div>
 
-        <TabsContent value="chunks" className="flex-1 m-0 p-0 overflow-hidden">
-          <ScrollArea className="h-[400px] p-4">
+        <TabsContent value="chunks" className="flex-1 m-0 p-0 min-h-0">
+          <ScrollArea className="h-full p-4">
             {!hasResults ? (
               <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
                 <AlertCircle className="w-8 h-8 text-muted-foreground/50" />
@@ -143,8 +143,8 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
           </ScrollArea>
         </TabsContent>
 
-        <TabsContent value="flow" className="flex-1 m-0 p-0 overflow-hidden">
-          <ScrollArea className="h-[400px] p-4">
+        <TabsContent value="flow" className="flex-1 m-0 p-0 min-h-0">
+          <ScrollArea className="h-full p-4">
             <RetrievalFlowDiagram 
               timing={details.timing} 
               model={details.model || "GLM-4.7"} 
