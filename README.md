@@ -1,4 +1,4 @@
-# NotebookLM Clone（个人/团队知识库原型）
+# Personal NotebookLM（个人/团队知识库原型）
 
 本仓库实现一个类似 NotebookLM 的原型产品：支持把资料导入到 Notebook，经过处理与向量化后，在同一 Notebook 内进行基于证据的对话（带引用），并在 Studio 中生成结构化产物（如测验、思维导图等）。
 

@@ -123,7 +123,7 @@ export function QuizViewer({ quiz, artifactId }: QuizViewerProps) {
             <Card key={question.id} className="p-4">
               {/* 题目 */}
               <div className="flex items-start gap-2 mb-3">
-                <span className="flex-shrink-0 w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-sm font-medium">
+                <span className="flex-shrink-0 w-6 h-6 bg-orange-100 text-orange-700 rounded-full flex items-center justify-center text-sm font-medium">
                   {index + 1}
                 </span>
                 <p className="text-sm font-medium">{question.question}</p>

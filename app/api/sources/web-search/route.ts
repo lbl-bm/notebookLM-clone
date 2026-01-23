@@ -24,7 +24,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'glm-4-air',
+        model: 'glm-4-flash',
         messages: [{ role: 'user', content: query }],
         tools: [{
           type: 'web_search',

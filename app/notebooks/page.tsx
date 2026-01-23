@@ -39,7 +39,7 @@ export default async function NotebooksPage() {
             <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center">
               <BookOpen className="w-5 h-5 text-primary-foreground" />
             </div>
-            <h1 className="text-xl font-semibold">NotebookLM</h1>
+            <h1 className="text-xl font-semibold">Personal NotebookLM</h1>
           </div>
           <UserNav user={user} />
         </div>

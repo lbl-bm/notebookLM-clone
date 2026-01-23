@@ -24,7 +24,7 @@ export async function PATCH(
     }
 
     // 2. 获取请求体
-    const body = await request.json()
+    const body = await request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃 
     const { title } = body
 
     if (typeof title !== 'string') {

@@ -14,7 +14,12 @@ export async function POST(
     }
 
     const { id } = params
-    const { notebookId, variables, sourceIds } = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
+
+    const { notebookId, variables, sourceIds } = body
 
     if (!notebookId) {
       return NextResponse.json({ error: '缺少 notebookId' }, { status: 400 })

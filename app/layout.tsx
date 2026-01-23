@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'] })
 const lora = Lora({ subsets: ['latin'], variable: '--font-serif' })
 
 export const metadata: Metadata = {
-  title: 'NotebookLM Clone - AI 知识库',
+  title: 'Personal NotebookLM - AI 知识库',
   description: '基于 RAG 的个人知识库管理系统',
 }
 

@@ -74,7 +74,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const body = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
     
     // 验证输入
     const result = urlSchema.safeParse(body)

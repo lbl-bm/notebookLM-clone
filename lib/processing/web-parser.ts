@@ -12,7 +12,7 @@ import { Readability } from '@mozilla/readability'
 export const WEB_FETCH_CONFIG = {
   timeout: 30000,  // 30秒
   headers: {
-    'User-Agent': 'Mozilla/5.0 (compatible; NotebookLM-Clone/1.0)',
+    'User-Agent': 'Mozilla/5.0 (compatible; Personal-NotebookLM/1.0)',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   },
