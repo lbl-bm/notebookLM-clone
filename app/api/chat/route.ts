@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     const chunks = deduplicateChunks(retrievalResult.chunks)
     const citations = buildCitations(chunks)
 
-    // 构造检索详情
+    // 构造检索详情（包含置信度信息）
     const retrievalDetails = {
       query: userQuestion,
       retrievalParams: {
@@ -119,6 +119,8 @@ export async function POST(request: Request) {
         metadata: c.metadata,
         scores: c.scores || null,
       })),
+      confidence: retrievalResult.confidence,
+      confidenceLevel: retrievalResult.confidenceLevel,
       timing: {
         embedding: retrievalResult.embeddingMs,
         retrieval: retrievalResult.retrievalMs,
@@ -167,6 +169,7 @@ export async function POST(request: Request) {
       chunks,
       userQuestion,
       chatHistory,
+      useDynamicPrompt: true, // 启用动态 Prompt 选择
     })
 
     // 4. 调用 API 流式生成

@@ -108,7 +108,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     }
   }, [currentCitations, setCitations])
 
-  // 转换为 Bubble.List 的 items 格式 (rerender-memo)
+  // 转换为 Bubble.List 的 items 格式 (rerender-memo) - 依赖优化
   const bubbleItems: BubbleItemType[] = useMemo(() => messages.map((msg) => {
     // 判断是否为无依据回复
     const isNoEvidence = msg.answerMode === 'no_evidence'
@@ -158,7 +158,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       loading: msg.role === 'assistant' && !msg.content && isLoading,
       footer,
     }
-  }), [messages, isLoading])
+  }), [messages, isLoading]) // 移除不必要的依赖
 
   // 自动滚动到底部
   useEffect(() => {
@@ -208,8 +208,15 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || '请求失败')
+        const errorText = await response.text()
+        let errorMessage = '请求失败'
+        try {
+          const errorData = JSON.parse(errorText)
+          errorMessage = errorData.error || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
       }
 
       // 检查是否是 JSON 响应（无依据情况）
@@ -258,8 +265,8 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
               const citationsData = JSON.parse(citationsMatch[1])
               citations = citationsData.citations || []
               retrievalDetails = citationsData.retrievalDetails || null
-            } catch {
-              // 忽略解析错误
+            } catch (e) {
+              console.error('解析 citations 失败:', e)
             }
           }
         } else {
@@ -385,7 +392,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
 
       {/* 输入框 */}
       <div className="flex-shrink-0 border-t p-4 bg-slate-50 dark:bg-slate-900/50">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w mx-auto">
           <div className="flex items-center justify-end mb-2">
             <ModelSelector
               value={chatMode}
@@ -399,11 +406,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
             onSubmit={handleSubmit}
             loading={isLoading}
             placeholder="输入你的问题... (Enter 发送)"
-            style={{ 
-              borderRadius: '8px',
-              border: '1px solid #d9d9d9',
-              backgroundColor: 'white',
-            }}
+            className="rounded-xl border border-slate-200 bg-white shadow-sm transition-all focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/10 dark:border-slate-800 dark:bg-slate-900 [&_.ant-btn]:h-8 [&_.ant-btn]:w-8 [&_.ant-btn]:min-w-[32px] [&_.ant-btn]:rounded-lg"
           />
         </div>
       </div>
@@ -413,7 +416,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
 
 function ModelSelector({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
-    <div className="w-[180px]">
+    <div className="w-[240px]">
       <Select value={value} onValueChange={onChange} disabled={!!disabled}>
         <SelectTrigger className="h-8 text-xs">
           <SelectValue placeholder="选择模型" />
