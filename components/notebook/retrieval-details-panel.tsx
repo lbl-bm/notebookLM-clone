@@ -45,8 +45,8 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
   const useHybridSearch = details.retrievalParams.useHybridSearch || details.retrievalParams.retrievalType === 'hybrid'
 
   return (
-    <div className="flex flex-col h-full max-h-[600px]">
-      <div className="p-4 border-b bg-muted/30">
+    <div className="flex flex-col h-full">
+      <div className="p-4 border-b bg-muted/30 flex-shrink-0">
         <div className="flex items-center gap-2 mb-2">
           <Settings2 className="w-4 h-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">检索参数</h3>
