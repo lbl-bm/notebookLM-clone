@@ -203,9 +203,19 @@ export async function POST(request: Request) {
     })
 
     if (!response.ok) {
-      const error = await response.text()
-      console.error('[Chat] LLM API 错误:', response.status, error)
-      throw new Error(`Chat API 错误: ${response.status} - ${error}`)
+      const errorText = await response.text()
+      console.error('[Chat] LLM API 错误:', response.status, errorText)
+      
+      // 输出更详细的错误信息
+      let errorMessage = `Chat API 错误: ${response.status}`
+      try {
+        const errorData = JSON.parse(errorText)
+        errorMessage = errorData.error?.message || errorData.message || errorMessage
+      } catch {
+        errorMessage = errorText ? `${errorMessage} - ${errorText.slice(0, 200)}` : errorMessage
+      }
+      
+      throw new Error(errorMessage)
     }
 
     // 5. 转换流式响应
@@ -301,7 +311,9 @@ export async function POST(request: Request) {
               }
             } catch (e) {
               // 忽略非 JSON 行或解析错误
-              // console.warn('[Chat] 解析行失败:', line, e)
+              if (process.env.NODE_ENV === 'development') {
+                console.warn('[Chat] 解析行失败:', line.slice(0, 100), e)
+              }
             }
           }
         }

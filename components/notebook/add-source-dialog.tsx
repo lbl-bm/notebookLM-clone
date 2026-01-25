@@ -94,17 +94,18 @@ export function SourceSearchBox({
     setIsSearching(true)
 
     try {
-      const selectedUrls = Array.from(selectedResults).map(
-        (idx) => searchResults[idx].link
+      // 所有结果都有链接，直接添加
+      const selectedItems = Array.from(selectedResults).map(
+        (idx) => searchResults[idx]
       )
 
-      for (const url of selectedUrls) {
-        await addUrlSource(url)
+      for (const item of selectedItems) {
+        await addUrlSource(item.link)
       }
 
       toast({
         title: '添加成功',
-        description: `已将 ${selectedUrls.length} 条来源添加到知识库`,
+        description: `已将 ${selectedItems.length} 条来源添加到知识库`,
         variant: 'success',
       })
 
@@ -308,6 +309,11 @@ export function SourceSearchBox({
                     <p className="font-medium text-sm text-slate-900 dark:text-slate-100 truncate">
                       {item.title || item.link}
                     </p>
+                    {item.link && (
+                      <p className="text-xs text-blue-600 dark:text-blue-400 truncate mt-0.5">
+                        {item.link}
+                      </p>
+                    )}
                     {item.content && (
                       <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
                         {item.content}

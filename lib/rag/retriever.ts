@@ -1,5 +1,6 @@
 import { getEmbedding } from '@/lib/ai/zhipu'
 import { prisma } from '@/lib/db/prisma'
+import { Prisma } from '@prisma/client'
 import { vectorStore, type ChunkMetadata } from '@/lib/db/vector-store'
 import { EMBEDDING_DIM } from '@/lib/config'
 
@@ -118,7 +119,12 @@ export async function retrieveChunks(params: {
   
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    try {
+      chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    } catch (error) {
+      console.error('[RAG] MMR 重排序失败，降级到基础检索:', error)
+      chunks = chunks.slice(0, topK)
+    }
   } else {
     chunks = chunks.slice(0, topK)
   }
@@ -189,10 +195,30 @@ export function calculateConfidence(chunks: RetrievedChunk[]): {
 
 /**
  * 计算余弦相似度
+ * 添加维度验证和详细日志
  */
 function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
+  if (!Array.isArray(vec1) || !Array.isArray(vec2)) {
+    console.error('[MMR] 向量类型错误:', { vec1: typeof vec1, vec2: typeof vec2 })
+    return 0
+  }
+  
   if (vec1.length !== vec2.length) {
-    throw new Error('Vectors must have the same length')
+    console.error('[MMR] 向量维度不匹配:', {
+      vec1Length: vec1.length,
+      vec2Length: vec2.length,
+      vec1Sample: vec1.slice(0, 3),
+      vec2Sample: vec2.slice(0, 3)
+    })
+    return 0 // 返回 0 而不是抛出错误，避免中断 MMR 计算
+  }
+  
+  // 验证维度是否为期望值
+  if (vec1.length !== EMBEDDING_DIM) {
+    console.warn('[MMR] 向量维度异常:', {
+      expected: EMBEDDING_DIM,
+      actual: vec1.length
+    })
   }
   
   let dotProduct = 0
@@ -237,17 +263,60 @@ export async function rerankeWithMMR(
   // 获取所有 chunk 的 embedding（从数据库获取）
   const chunkEmbeddings = new Map<string, number[]>()
   
-  // 批量查询 chunk embeddings - 使用原始SQL
-  const chunkIds = candidates.map(c => c.id)
-  const embeddingRecords = await prisma.$queryRawUnsafe<Array<{ id: string; embedding: number[] }>>(
-    `SELECT id, embedding FROM document_chunks WHERE id = ANY($1::text[])`,
-    chunkIds
-  )
+  // 批量查询 chunk embeddings - 使用类型安全的查询
+  const chunkIds = candidates.map(c => BigInt(c.id))
   
-  for (const record of embeddingRecords) {
-    if (record.embedding) {
-      chunkEmbeddings.set(record.id, record.embedding as number[])
+  try {
+    const embeddingRecords = await prisma.$queryRaw<Array<{ id: bigint; embedding: any }>>(
+      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(ARRAY[${Prisma.join(chunkIds)}]::bigint[])`
+    )
+    
+    // 解析并验证 embedding 数据
+    for (const record of embeddingRecords) {
+      if (!record.embedding) continue
+      
+      // 处理不同的数据格式
+      let embedding: number[]
+      
+      if (Array.isArray(record.embedding)) {
+        embedding = record.embedding
+      } else if (typeof record.embedding === 'string') {
+        // PostgreSQL vector 类型可能被序列化为字符串 "[1,2,3,...]"
+        try {
+          embedding = JSON.parse(record.embedding)
+        } catch {
+          console.error('[MMR] 无法解析 embedding 字符串:', record.id.toString())
+          continue
+        }
+      } else {
+        console.error('[MMR] 未知 embedding 格式:', typeof record.embedding)
+        continue
+      }
+      
+      // 验证维度
+      if (embedding.length !== EMBEDDING_DIM) {
+        console.warn('[MMR] Chunk embedding 维度不匹配:', {
+          chunkId: record.id.toString(),
+          expected: EMBEDDING_DIM,
+          actual: embedding.length
+        })
+        continue // 跳过维度不匹配的 embedding
+      }
+      
+      chunkEmbeddings.set(record.id.toString(), embedding)
     }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[MMR] 成功加载 embedding:', {
+        requested: chunkIds.length,
+        loaded: chunkEmbeddings.size,
+        queryEmbeddingDim: queryEmbedding.length
+      })
+    }
+  } catch (error) {
+    console.error('[MMR] 查询 embedding 失败:', error)
+    // 如果查询失败，直接返回原始结果（不使用 MMR）
+    return chunks.slice(0, topK)
   }
   
   // 已选集合
@@ -399,7 +468,12 @@ export async function hybridRetrieveChunks(params: {
   
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    try {
+      chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    } catch (error) {
+      console.error('[RAG] MMR 重排序失败，降级到基础检索:', error)
+      chunks = chunks.slice(0, topK)
+    }
   } else {
     chunks = chunks.slice(0, topK)
   }
