@@ -119,12 +119,7 @@ export async function retrieveChunks(params: {
   
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    try {
-      chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
-    } catch (error) {
-      console.error('[RAG] MMR 重排序失败，降级到基础检索:', error)
-      chunks = chunks.slice(0, topK)
-    }
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
   } else {
     chunks = chunks.slice(0, topK)
   }
@@ -195,30 +190,13 @@ export function calculateConfidence(chunks: RetrievedChunk[]): {
 
 /**
  * 计算余弦相似度
- * 添加维度验证和详细日志
+ * 维度不匹配时返回 0 而非抛出异常，避免中断 MMR 流程
  */
 function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
-  if (!Array.isArray(vec1) || !Array.isArray(vec2)) {
-    console.error('[MMR] 向量类型错误:', { vec1: typeof vec1, vec2: typeof vec2 })
-    return 0
-  }
-  
+  // 维度校验：不匹配时返回 0
   if (vec1.length !== vec2.length) {
-    console.error('[MMR] 向量维度不匹配:', {
-      vec1Length: vec1.length,
-      vec2Length: vec2.length,
-      vec1Sample: vec1.slice(0, 3),
-      vec2Sample: vec2.slice(0, 3)
-    })
-    return 0 // 返回 0 而不是抛出错误，避免中断 MMR 计算
-  }
-  
-  // 验证维度是否为期望值
-  if (vec1.length !== EMBEDDING_DIM) {
-    console.warn('[MMR] 向量维度异常:', {
-      expected: EMBEDDING_DIM,
-      actual: vec1.length
-    })
+    console.warn(`[MMR] 向量维度不匹配: ${vec1.length} vs ${vec2.length}，返回相似度 0`)
+    return 0
   }
   
   let dotProduct = 0
@@ -247,6 +225,11 @@ function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
  * @param lambda 相关性权重 (0-1)，默认 0.7
  * @param topK 返回的结果数量
  * @returns 重排序后的结果
+ * 
+ * 降级策略：
+ * 1. 查询层失败 → 返回原始 chunks
+ * 2. 余弦相似度计算失败 → 返回 0 并继续
+ * 3. rerankeWithMMR 调用失败 → 切换为 chunks.slice(0, topK) 基础截断
  */
 export async function rerankeWithMMR(
   chunks: RetrievedChunk[],
@@ -257,127 +240,120 @@ export async function rerankeWithMMR(
   if (chunks.length === 0) return []
   if (chunks.length <= 1) return chunks
   
-  // 限制候选集大小，避免过多计算
-  const candidates = chunks.slice(0, Math.min(20, chunks.length))
-  
-  // 获取所有 chunk 的 embedding（从数据库获取）
-  const chunkEmbeddings = new Map<string, number[]>()
-  
-  // 批量查询 chunk embeddings - 使用类型安全的查询
-  const chunkIds = candidates.map(c => BigInt(c.id))
-  
   try {
+    // 限制候选集大小，避免过多计算
+    const candidates = chunks.slice(0, Math.min(20, chunks.length))
+    
+    // 获取所有 chunk 的 embedding（从数据库获取）
+    const chunkEmbeddings = new Map<string, number[]>()
+    
+    // 批量查询 chunk embeddings - 使用类型安全的 Prisma.sql
+    const chunkIds = candidates.map(c => BigInt(c.id))
     const embeddingRecords = await prisma.$queryRaw<Array<{ id: bigint; embedding: any }>>(
-      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(ARRAY[${Prisma.join(chunkIds)}]::bigint[])`
+      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(${chunkIds}::bigint[])`
     )
     
-    // 解析并验证 embedding 数据
+    // 解析 embedding 并进行维度校验
     for (const record of embeddingRecords) {
       if (!record.embedding) continue
       
-      // 处理不同的数据格式
+      // 兼容两种格式：原生数组 和 JSON 字符串
       let embedding: number[]
-      
-      if (Array.isArray(record.embedding)) {
-        embedding = record.embedding
-      } else if (typeof record.embedding === 'string') {
-        // PostgreSQL vector 类型可能被序列化为字符串 "[1,2,3,...]"
-        try {
+      try {
+        if (typeof record.embedding === 'string') {
           embedding = JSON.parse(record.embedding)
-        } catch {
-          console.error('[MMR] 无法解析 embedding 字符串:', record.id.toString())
+        } else if (Array.isArray(record.embedding)) {
+          embedding = record.embedding
+        } else {
+          console.warn(`[MMR] 跳过无效 embedding 格式: chunk ${record.id}`)
           continue
         }
-      } else {
-        console.error('[MMR] 未知 embedding 格式:', typeof record.embedding)
+        
+        // 维度校验：必须匹配 EMBEDDING_DIM
+        if (embedding.length !== EMBEDDING_DIM) {
+          console.warn(`[MMR] 跳过维度不匹配的向量: chunk ${record.id}, 期望 ${EMBEDDING_DIM}, 实际 ${embedding.length}`)
+          continue
+        }
+        
+        chunkEmbeddings.set(record.id.toString(), embedding)
+      } catch (error) {
+        console.warn(`[MMR] 解析 embedding 失败: chunk ${record.id}`, error)
+        // 解析失败则跳过该记录
         continue
       }
-      
-      // 验证维度
-      if (embedding.length !== EMBEDDING_DIM) {
-        console.warn('[MMR] Chunk embedding 维度不匹配:', {
-          chunkId: record.id.toString(),
-          expected: EMBEDDING_DIM,
-          actual: embedding.length
-        })
-        continue // 跳过维度不匹配的 embedding
-      }
-      
-      chunkEmbeddings.set(record.id.toString(), embedding)
     }
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[MMR] 成功加载 embedding:', {
-        requested: chunkIds.length,
-        loaded: chunkEmbeddings.size,
-        queryEmbeddingDim: queryEmbedding.length
-      })
+    // 如果没有有效的 embeddings，降级为基础截断
+    if (chunkEmbeddings.size === 0) {
+      console.warn('[MMR] 无有有效的 embeddings，降级为基础截断')
+      return chunks.slice(0, topK)
     }
-  } catch (error) {
-    console.error('[MMR] 查询 embedding 失败:', error)
-    // 如果查询失败，直接返回原始结果（不使用 MMR）
-    return chunks.slice(0, topK)
-  }
-  
-  // 已选集合
-  const selected: RetrievedChunk[] = []
-  const remaining = [...candidates]
-  
-  // 第一个选择相关性最高的
-  if (remaining.length > 0) {
-    const first = remaining[0] // 已经按相关度排序
-    selected.push(first)
-    remaining.shift()
-  }
-  
-  // 迭代选择剩余的 chunks
-  while (selected.length < topK && remaining.length > 0) {
-    let maxScore = -Infinity
-    let maxIndex = 0
     
-    // 计算每个候选 chunk 的 MMR 分数
-    for (let i = 0; i < remaining.length; i++) {
-      const candidate = remaining[i]
-      const candidateEmbedding = chunkEmbeddings.get(candidate.id)
+    // 已选集合
+    const selected: RetrievedChunk[] = []
+    const remaining = [...candidates]
+    
+    // 第一个选择相关性最高的
+    if (remaining.length > 0) {
+      const first = remaining[0] // 已经按相关度排序
+      selected.push(first)
+      remaining.shift()
+    }
+    
+    // 迭代选择剩余的 chunks
+    while (selected.length < topK && remaining.length > 0) {
+      let maxScore = -Infinity
+      let maxIndex = 0
       
-      if (!candidateEmbedding) {
-        // 如果没有 embedding，跳过
-        continue
-      }
-      
-      // 相关性：与查询的相似度
-      const relevance = candidate.similarity
-      
-      // 多样性：与已选 chunks 的最大相似度
-      let maxSimilarity = 0
-      for (const selectedChunk of selected) {
-        const selectedEmbedding = chunkEmbeddings.get(selectedChunk.id)
-        if (selectedEmbedding) {
-          const similarity = calculateCosineSimilarity(candidateEmbedding, selectedEmbedding)
-          maxSimilarity = Math.max(maxSimilarity, similarity)
+      // 计算每个候选 chunk 的 MMR 分数
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i]
+        const candidateEmbedding = chunkEmbeddings.get(candidate.id)
+        
+        if (!candidateEmbedding) {
+          // 如果没有 embedding，跳过
+          continue
+        }
+        
+        // 相关性：与查询的相似度
+        const relevance = candidate.similarity
+        
+        // 多样性：与已选 chunks 的最大相似度
+        let maxSimilarity = 0
+        for (const selectedChunk of selected) {
+          const selectedEmbedding = chunkEmbeddings.get(selectedChunk.id)
+          if (selectedEmbedding) {
+            // 余弦相似度计算失败时返回 0
+            const similarity = calculateCosineSimilarity(candidateEmbedding, selectedEmbedding)
+            maxSimilarity = Math.max(maxSimilarity, similarity)
+          }
+        }
+        
+        // MMR 分数 = λ * Relevance - (1-λ) * MaxSimilarity
+        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity
+        
+        if (mmrScore > maxScore) {
+          maxScore = mmrScore
+          maxIndex = i
         }
       }
       
-      // MMR 分数 = λ * Relevance - (1-λ) * MaxSimilarity
-      const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity
-      
-      if (mmrScore > maxScore) {
-        maxScore = mmrScore
-        maxIndex = i
+      // 选择 MMR 分数最高的 chunk
+      if (maxScore > -Infinity) {
+        selected.push(remaining[maxIndex])
+        remaining.splice(maxIndex, 1)
+      } else {
+        // 如果所有候选都没有 embedding，停止
+        break
       }
     }
     
-    // 选择 MMR 分数最高的 chunk
-    if (maxScore > -Infinity) {
-      selected.push(remaining[maxIndex])
-      remaining.splice(maxIndex, 1)
-    } else {
-      // 如果所有候选都没有 embedding，停止
-      break
-    }
+    return selected
+  } catch (error) {
+    // 查询层失败：降级为基础截断
+    console.error('[MMR] 重排序失败，降级为基础截断', error)
+    return chunks.slice(0, topK)
   }
-  
-  return selected
 }
 
 export function deduplicateChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
@@ -468,12 +444,7 @@ export async function hybridRetrieveChunks(params: {
   
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    try {
-      chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
-    } catch (error) {
-      console.error('[RAG] MMR 重排序失败，降级到基础检索:', error)
-      chunks = chunks.slice(0, topK)
-    }
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
   } else {
     chunks = chunks.slice(0, topK)
   }
