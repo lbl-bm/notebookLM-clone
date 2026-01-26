@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
             data: { status: 'completed', completedAt: new Date() }
           })
           
-          results.push({ id: item.id, status: 'success' })
+          results.push({ id: item.id.toString(), status: 'success' })
           
         } catch (error) {
           console.error(`Failed to process item ${item.id}:`, error)
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
              })
           }
           
-          results.push({ id: item.id, status: 'failed', error: err.message })
+          results.push({ id: item.id.toString(), status: 'failed', error: err.message })
         }
       }
     } else {

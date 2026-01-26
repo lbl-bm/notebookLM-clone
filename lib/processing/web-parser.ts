@@ -12,7 +12,7 @@ import { Readability } from '@mozilla/readability'
 export const WEB_FETCH_CONFIG = {
   timeout: 30000,  // 30秒
   headers: {
-    'User-Agent': 'Mozilla/5.0 (compatible; NotebookLM-Clone/1.0)',
+    'User-Agent': 'Mozilla/5.0 (compatible; Personal-NotebookLM/1.0)',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   },
@@ -169,24 +169,103 @@ export function extractContent(html: string, url: string): WebParseResult {
 }
 
 /**
- * 完整的网页处理流程
+ * 使用 Jina Reader 获取网页内容 (Fallback)
+ * 能够处理 SPA 和反爬页面，返回 Markdown
  */
-export async function processWebpage(url: string): Promise<WebParseResult> {
-  // 1. 抓取网页
-  const { html, contentType } = await fetchWebpage(url)
-  
-  // 2. 检查是否为 PDF（通过 Content-Type）
-  if (contentType.includes('application/pdf')) {
+export async function fetchWithJina(url: string): Promise<WebParseResult> {
+  try {
+    const jinaUrl = `https://r.jina.ai/${url}`
+    const headers: Record<string, string> = {
+      'User-Agent': WEB_FETCH_CONFIG.headers['User-Agent'], // 复用浏览器 UA
+      'X-With-Generated-Alt': 'true',
+    }
+
+    // 如果配置了 API Key，添加到请求头
+    if (process.env.JINA_API_KEY) {
+      headers['Authorization'] = `Bearer ${process.env.JINA_API_KEY}`
+    }
+
+    const response = await fetchWithTimeout(
+      jinaUrl,
+      { headers },
+      WEB_FETCH_CONFIG.timeout
+    )
+
+    if (!response.ok) {
+      throw new Error(`Jina Reader 错误: ${response.status}`)
+    }
+
+    const markdown = await response.text()
+    
+    // 从 Markdown 中提取标题（第一行通常是标题）
+    const titleMatch = markdown.match(/^#\s+(.+)$/m)
+    const title = titleMatch ? titleMatch[1] : ''
+    
+    // 清理可能包含的 Jina 广告尾注
+    const cleanMarkdown = markdown.replace(/\[Parsed by Jina Reader\][\s\S]*$/, '').trim()
+    
+    const wordCount = cleanMarkdown.split(/\s+/).length
+
+    return {
+      title,
+      content: cleanMarkdown,
+      wordCount,
+      excerpt: cleanMarkdown.slice(0, 200),
+    }
+  } catch (error) {
+    console.error('[WebParser] Jina Reader fallback failed:', error)
     return {
       title: '',
       content: '',
       wordCount: 0,
-      error: 'PDF_DETECTED', // 特殊标记，需要按 PDF 处理
+      error: `Jina Reader 失败: ${(error as Error).message}`,
     }
   }
-  
-  // 3. 提取正文
-  return extractContent(html, url)
+}
+
+/**
+ * 完整的网页处理流程
+ * 策略：Local Fetch -> Readability -> Jina Reader Fallback
+ */
+export async function processWebpage(url: string): Promise<WebParseResult> {
+  try {
+    // 1. 尝试本地抓取
+    const { html, contentType } = await fetchWebpage(url)
+    
+    // 2. 检查是否为 PDF
+    if (contentType.includes('application/pdf')) {
+      return {
+        title: '',
+        content: '',
+        wordCount: 0,
+        error: 'PDF_DETECTED',
+      }
+    }
+    
+    // 3. 提取正文
+    const result = extractContent(html, url)
+    
+    // 4. 质量检查与回退
+    // 如果提取失败，或内容过短（< 100 字），尝试使用 Jina Reader
+    if (result.error || result.wordCount < 50) {
+      console.log(`[WebParser] 本地解析质量不足 (${result.wordCount} words), 尝试 Jina Reader...`)
+      const jinaResult = await fetchWithJina(url)
+      
+      // 如果 Jina 成功且内容更丰富，使用 Jina 的结果
+      if (!jinaResult.error && jinaResult.wordCount > result.wordCount) {
+        return {
+          ...jinaResult,
+          title: jinaResult.title || result.title, // 优先保留本地抓取的标题（如果 Jina 没取到）
+        }
+      }
+    }
+    
+    return result
+  } catch (error) {
+    console.warn(`[WebParser] 本地抓取失败: ${(error as Error).message}, 尝试 Jina Reader...`)
+    // 本地抓取彻底失败（如 403），直接尝试 Jina
+    return fetchWithJina(url)
+  }
 }
 
 /**

@@ -85,6 +85,7 @@ export async function POST(request: Request) {
         title,
         status: 'pending',
         meta: {
+          content, // 保存文字内容到 meta 中
           contentType: 'text/plain',
           charCount: content.length,
           wordCount: content.split(/\s+/).filter(Boolean).length,

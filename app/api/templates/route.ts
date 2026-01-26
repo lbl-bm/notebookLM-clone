@@ -33,7 +33,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const { name, description, template, variables } = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
+
+    const { name, description, template, variables } = body
     if (!name || !template) {
       return NextResponse.json({ error: '名称和内容不能为空' }, { status: 400 })
     }

@@ -627,104 +627,136 @@ export function SourceCard({
 
       {/* 详情对话框 */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto gap-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded flex items-center justify-center ${getIconBg()}`}>
+            <DialogTitle className="flex items-start gap-3">
+              <div className={`mt-1 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${getIconBg()}`}>
                 {getSourceIcon()}
               </div>
-              <span className="truncate">{source.title}</span>
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="leading-tight break-words">{source.title}</span>
+                <span className="text-xs font-normal text-muted-foreground">ID: {source.id.slice(0, 8)}</span>
+              </div>
             </DialogTitle>
-            <DialogDescription>
-              来源详情
-            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            {/* 状态 */}
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">状态</span>
-              <span className={`text-sm font-medium flex items-center gap-1 ${status.color}`}>
-                <StatusIcon className={`w-4 h-4 ${status.animate ? 'animate-spin' : ''}`} />
-                {status.label}
-              </span>
+          <div className="space-y-6">
+            {/* 状态卡片 */}
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-500">当前状态</span>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${status.bgColor} ${status.color}`}>
+                  <StatusIcon className={`w-3.5 h-3.5 ${status.animate ? 'animate-spin' : ''}`} />
+                  {status.label}
+                </span>
+              </div>
+              
+              {/* 进度条 */}
+              {showProgress && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>处理进度</span>
+                    <span>{Math.round(progressValue * 100)}%</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                    <div 
+                      className="h-full bg-primary transition-all duration-500 ease-out" 
+                      style={{ width: `${Math.round(progressValue * 100)}%` }} 
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* URL */}
-            {source.url && (
-              <div className="space-y-1">
-                <span className="text-sm text-muted-foreground">链接</span>
-                <a
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-sm text-primary hover:underline break-all"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {source.url}
-                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                </a>
-              </div>
-            )}
+            {/* 详细信息列表 */}
+            <div className="grid gap-4 text-sm">
+              {source.url && (
+                <div className="grid grid-cols-[80px_1fr] gap-2 items-start">
+                  <span className="text-muted-foreground">来源链接</span>
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-primary hover:underline break-all leading-normal"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {source.url}
+                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                  </a>
+                </div>
+              )}
 
-            {/* 网页标题（如果与显示标题不同） */}
-            {meta.fetchedTitle && meta.fetchedTitle !== source.title && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">网页标题</span>
-                <span className="text-sm truncate max-w-[200px]">{meta.fetchedTitle}</span>
-              </div>
-            )}
+              {meta.fetchedTitle && meta.fetchedTitle !== source.title && (
+                <div className="grid grid-cols-[80px_1fr] gap-2 items-start">
+                  <span className="text-muted-foreground">网页标题</span>
+                  <span className="text-slate-900 dark:text-slate-100 break-words leading-normal">{meta.fetchedTitle}</span>
+                </div>
+              )}
 
-            {/* 文件大小 */}
-            {fileSize && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">文件大小</span>
-                <span className="text-sm">{fileSize}</span>
-              </div>
-            )}
+              {fileSize && (
+                <div className="grid grid-cols-[80px_1fr] gap-2">
+                  <span className="text-muted-foreground">文件大小</span>
+                  <span className="font-mono">{fileSize}</span>
+                </div>
+              )}
 
-            {/* 字数统计 */}
-            {meta.wordCount && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">字数统计</span>
-                <span className="text-sm">{meta.wordCount.toLocaleString()} 字</span>
-              </div>
-            )}
+              {meta.wordCount && (
+                <div className="grid grid-cols-[80px_1fr] gap-2">
+                  <span className="text-muted-foreground">字数统计</span>
+                  <span className="font-mono">{meta.wordCount.toLocaleString()} 字</span>
+                </div>
+              )}
 
-            {/* 添加时间 */}
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">添加时间</span>
-              <span className="text-sm">{formatRelativeTime(source.createdAt)}</span>
+              <div className="grid grid-cols-[80px_1fr] gap-2">
+                <span className="text-muted-foreground">添加时间</span>
+                <span className="font-mono">{formatRelativeTime(source.createdAt)}</span>
+              </div>
+
+              {meta.lastRefetchAt && (
+                <div className="grid grid-cols-[80px_1fr] gap-2">
+                  <span className="text-muted-foreground">最后抓取</span>
+                  <span className="font-mono">{formatRelativeTime(new Date(meta.lastRefetchAt))}</span>
+                </div>
+              )}
             </div>
-
-            {/* 最后抓取时间 */}
-            {meta.lastRefetchAt && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">最后抓取</span>
-                <span className="text-sm">{formatRelativeTime(new Date(meta.lastRefetchAt))}</span>
-              </div>
-            )}
 
             {/* 内容预览 */}
             {meta.contentPreview && (
-              <div className="space-y-1">
-                <span className="text-sm text-muted-foreground">内容预览</span>
-                <p className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg line-clamp-4">
+              <div className="space-y-2">
+                <span className="text-sm font-medium text-slate-900 dark:text-slate-100">内容预览</span>
+                <div className="text-sm text-muted-foreground bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 leading-relaxed max-h-[150px] overflow-y-auto">
                   {meta.contentPreview}
-                </p>
+                </div>
               </div>
             )}
 
+            {/* 处理日志 */}
             {stageRows.length > 0 && (
               <div className="space-y-2">
-                <span className="text-sm text-muted-foreground">处理日志</span>
-                <div className="space-y-1">
-                  {stageRows.map((row) => (
-                    <div key={row.key} className="flex items-center justify-between text-sm">
-                      <span className="text-slate-700 dark:text-slate-200">{stageLabel[row.key] || row.key}</span>
-                      <span className={row.status === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
-                        {row.status === 'success' ? '成功' : '失败'}
-                        {typeof row.duration === 'number' ? ` · ${(row.duration / 1000).toFixed(1)}s` : ''}
+                <span className="text-sm font-medium text-slate-900 dark:text-slate-100">处理日志</span>
+                <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+                  {stageRows.map((row, i) => (
+                    <div 
+                      key={row.key} 
+                      className={`flex items-center justify-between text-xs p-3 ${
+                        i !== stageRows.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''
+                      }`}
+                    >
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{stageLabel[row.key] || row.key}</span>
+                      <span className={`flex items-center gap-1.5 ${
+                        row.status === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {row.status === 'success' ? (
+                          <CheckCircle2 className="w-3 h-3" />
+                        ) : (
+                          <AlertCircle className="w-3 h-3" />
+                        )}
+                        {row.status === 'success' ? '完成' : '失败'}
+                        {typeof row.duration === 'number' && (
+                          <span className="text-slate-400 dark:text-slate-600 ml-1">
+                            {(row.duration / 1000).toFixed(1)}s
+                          </span>
+                        )}
                       </span>
                     </div>
                   ))}
@@ -734,49 +766,56 @@ export function SourceCard({
 
             {/* 警告信息 */}
             {meta.warning && (
-              <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
-                <p className="text-sm text-yellow-700 dark:text-yellow-400">{meta.warning}</p>
+              <div className="flex items-start gap-3 p-4 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-900/20 text-amber-800 dark:text-amber-200">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="text-sm leading-relaxed">{meta.warning}</div>
               </div>
             )}
 
             {/* 错误信息 */}
             {source.status === 'failed' && source.errorMessage && (
-              <div className="p-3 bg-destructive/10 rounded-lg border border-destructive/20">
-                <p className="text-sm text-destructive font-medium mb-1">错误原因</p>
-                <p className="text-sm text-destructive/80">{source.errorMessage}</p>
+              <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20 text-red-800 dark:text-red-200">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">处理失败</p>
+                  <p className="text-sm opacity-90 leading-relaxed">{source.errorMessage}</p>
+                </div>
               </div>
             )}
           </div>
 
-          <DialogFooter className="flex-col sm:flex-col gap-2">
-            {source.status === 'pending' && (
-              <Button className="w-full" onClick={handleProcessNow} disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <RefreshCw className="mr-2 h-4 w-4" />
-                立即处理
-              </Button>
-            )}
-            {source.status === 'pending' && source.queueStatus === 'pending' && (
-              <Button variant="outline" className="w-full" onClick={handleCancelQueue} disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <X className="mr-2 h-4 w-4" />
-                取消排队
-              </Button>
-            )}
-            {(source.status === 'failed' || (isUrl && source.status === 'ready')) && (
-              <Button
-                className="w-full"
-                onClick={handleRetry}
-                disabled={loading}
-              >
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {isUrl ? '重新抓取' : '重试处理'}
-              </Button>
-            )}
+          <DialogFooter className="gap-3 sm:gap-0 sm:justify-between pt-2">
+            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+              {source.status === 'pending' && (
+                <Button onClick={handleProcessNow} disabled={loading} className="w-full sm:w-auto">
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  立即处理
+                </Button>
+              )}
+              {source.status === 'pending' && source.queueStatus === 'pending' && (
+                <Button variant="outline" onClick={handleCancelQueue} disabled={loading} className="w-full sm:w-auto">
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <X className="mr-2 h-4 w-4" />
+                  取消排队
+                </Button>
+              )}
+              {(source.status === 'failed' || (isUrl && source.status === 'ready')) && (
+                <Button
+                  onClick={handleRetry}
+                  disabled={loading}
+                  className="w-full sm:w-auto"
+                >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {isUrl ? '重新抓取' : '重试处理'}
+                </Button>
+              )}
+            </div>
+            
             <Button
-              variant="outline"
-              className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+              variant="ghost"
+              className="w-full sm:w-auto text-destructive hover:text-destructive hover:bg-destructive/10"
               onClick={() => {
                 setShowDetailDialog(false)
                 setShowDeleteDialog(true)

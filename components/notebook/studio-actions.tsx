@@ -66,52 +66,62 @@ export function StudioActions({
   elapsedTime,
 }: StudioActionsProps) {
   return (
-    <div className="space-y-2">
-      {actions.map(({ type, icon, label, description }) => {
-        const isCurrentGenerating = isGenerating && generatingType === type
-        const isDisabled = disabled || (isGenerating && !isCurrentGenerating)
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {actions.map(({ type, icon, label, description }) => {
+          const isCurrentGenerating = isGenerating && generatingType === type
+          const isDisabled = disabled || (isGenerating && !isCurrentGenerating)
 
-        return (
-          <TooltipProvider key={type}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2"
-                  disabled={isDisabled}
-                  onClick={() => onGenerate(type)}
-                >
-                  {isCurrentGenerating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    icon
-                  )}
-                  <span className="flex-1 text-left">
-                    {isCurrentGenerating ? '生成中...' : label}
-                  </span>
-                  {isCurrentGenerating && elapsedTime !== undefined && (
-                    <span className="text-xs text-muted-foreground">
-                      {Math.floor(elapsedTime)}s
-                    </span>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="left">
-                <p>{disabled ? '请先上传资料' : description}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )
-      })}
+          return (
+            <TooltipProvider key={type}>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-3 flex flex-col items-center justify-center gap-2 text-center bg-card hover:bg-accent/50 border-muted-foreground/20 hover:border-primary/20 transition-all duration-300"
+                    disabled={isDisabled}
+                    onClick={() => onGenerate(type)}
+                  >
+                    <div className={`p-2 rounded-full bg-primary/5 ${isCurrentGenerating ? 'animate-pulse' : ''}`}>
+                      {isCurrentGenerating ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      ) : (
+                        <div className="text-primary">{icon}</div>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-sm font-medium">
+                        {isCurrentGenerating ? '生成中...' : label}
+                      </span>
+                      {isCurrentGenerating && elapsedTime !== undefined && (
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {Math.floor(elapsedTime)}s
+                        </span>
+                      )}
+                    </div>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[200px] text-xs">
+                  <p>{disabled ? '请先上传资料' : description}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+        })}
+      </div>
 
       {/* 来源统计 */}
-      <p className="text-xs text-muted-foreground text-center pt-2">
-        {disabled ? (
-          '请先上传资料'
-        ) : (
-          `基于 ${readySourceCount} 个来源`
-        )}
-      </p>
+      <div className="flex items-center justify-center gap-2 py-2">
+        <div className="h-px w-12 bg-border/50" />
+        <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+          {disabled ? (
+            '请先上传资料'
+          ) : (
+            `基于 ${readySourceCount} 个来源`
+          )}
+        </p>
+        <div className="h-px w-12 bg-border/50" />
+      </div>
     </div>
   )
 }

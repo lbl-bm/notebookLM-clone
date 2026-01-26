@@ -11,8 +11,9 @@ import { Bubble, Sender } from '@ant-design/x'
 import { XMarkdown } from '@ant-design/x-markdown'
 import type { BubbleItemType } from '@ant-design/x'
 import { Card } from '@/components/ui/card'
-import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target } from 'lucide-react'
-import { Avatar, Tooltip, Button as AntButton } from 'antd'
+import { useToast } from '@/hooks/use-toast'
+import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target, Check, Copy, Trash2 } from 'lucide-react'
+import { Avatar, Tooltip, Popconfirm, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
 import dynamic from 'next/dynamic'
 import {
@@ -70,6 +71,33 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     setChatModeState(value)
     localStorage.setItem('chat-model', value)
   }, [])
+  const { toast } = useToast()
+
+  // 删除消息
+  const handleDelete = useCallback(async (messageId: string) => {
+    try {
+      const res = await fetch(`/api/messages/${messageId}`, {
+        method: 'DELETE',
+      })
+      
+      if (!res.ok) {
+        throw new Error('删除失败')
+      }
+      
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+      toast({
+        title: '已删除',
+        description: '消息已删除',
+        variant: 'success',
+      })
+    } catch (error) {
+      toast({
+        title: '操作失败',
+        description: '无法删除消息',
+        variant: 'error',
+      })
+    }
+  }, [toast])
 
   useEffect(() => {
     const stored = localStorage.getItem('chat-model')
@@ -108,7 +136,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     }
   }, [currentCitations, setCitations])
 
-  // 转换为 Bubble.List 的 items 格式 (rerender-memo)
+  // 转换为 Bubble.List 的 items 格式 (rerender-memo) - 依赖优化
   const bubbleItems: BubbleItemType[] = useMemo(() => messages.map((msg) => {
     // 判断是否为无依据回复
     const isNoEvidence = msg.answerMode === 'no_evidence'
@@ -158,7 +186,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       loading: msg.role === 'assistant' && !msg.content && isLoading,
       footer,
     }
-  }), [messages, isLoading])
+  }), [messages, isLoading]) // 移除不必要的依赖
 
   // 自动滚动到底部
   useEffect(() => {
@@ -208,8 +236,15 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || '请求失败')
+        const errorText = await response.text()
+        let errorMessage = '请求失败'
+        try {
+          const errorData = JSON.parse(errorText)
+          errorMessage = errorData.error || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
       }
 
       // 检查是否是 JSON 响应（无依据情况）
@@ -258,8 +293,8 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
               const citationsData = JSON.parse(citationsMatch[1])
               citations = citationsData.citations || []
               retrievalDetails = citationsData.retrievalDetails || null
-            } catch {
-              // 忽略解析错误
+            } catch (e) {
+              console.error('解析 citations 失败:', e)
             }
           }
         } else {
@@ -321,6 +356,24 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       placement: 'end' as const,
       variant: 'filled' as const,
       avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: 'hsl(var(--muted))', color: 'hsl(var(--foreground))' }} />,
+      contentRender: (content: string, info: { key?: string | number }) => (
+        <div className="group relative pr-6">
+          {content}
+          <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Popconfirm
+              title="删除这条消息？"
+              onConfirm={() => handleDelete(info.key as string)}
+              okText="删除"
+              cancelText="取消"
+              placement="topRight"
+            >
+              <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-muted-foreground hover:text-destructive transition-colors">
+                <Trash2 size={12} />
+              </button>
+            </Popconfirm>
+          </div>
+        </div>
+      ),
       styles: {
         content: {
           backgroundColor: 'hsl(var(--muted))',
@@ -338,7 +391,24 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       contentRender: (content: string, info: { key?: string | number }) => {
         // 找到对应的消息获取 citations
         const msg = messages.find(m => m.id === info.key)
-        return renderMarkdown(content, msg?.citations as Citation[] | undefined)
+        return (
+          <div className="group relative pr-6">
+            {renderMarkdown(content, msg?.citations as Citation[] | undefined)}
+            <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <Popconfirm
+                title="删除这条消息？"
+                onConfirm={() => handleDelete(info.key as string)}
+                okText="删除"
+                cancelText="取消"
+                placement="topLeft"
+              >
+                <button className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-muted-foreground hover:text-destructive transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              </Popconfirm>
+            </div>
+          </div>
+        )
       },
       styles: {
         content: {
@@ -351,7 +421,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
         },
       },
     },
-  }), [messages, renderMarkdown])
+  }), [messages, renderMarkdown, handleDelete])
 
   return (
     <Card className="h-full flex flex-col shadow-sm overflow-hidden">
@@ -385,7 +455,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
 
       {/* 输入框 */}
       <div className="flex-shrink-0 border-t p-4 bg-slate-50 dark:bg-slate-900/50">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w mx-auto">
           <div className="flex items-center justify-end mb-2">
             <ModelSelector
               value={chatMode}
@@ -399,11 +469,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
             onSubmit={handleSubmit}
             loading={isLoading}
             placeholder="输入你的问题... (Enter 发送)"
-            style={{ 
-              borderRadius: '8px',
-              border: '1px solid #d9d9d9',
-              backgroundColor: 'white',
-            }}
+            className="rounded-xl border border-slate-200 bg-white shadow-sm transition-all focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/10 dark:border-slate-800 dark:bg-slate-900 [&_.ant-btn]:h-8 [&_.ant-btn]:w-8 [&_.ant-btn]:min-w-[32px] [&_.ant-btn]:rounded-lg"
           />
         </div>
       </div>
@@ -413,7 +479,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
 
 function ModelSelector({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
-    <div className="w-[180px]">
+    <div className="w-[240px]">
       <Select value={value} onValueChange={onChange} disabled={!!disabled}>
         <SelectTrigger className="h-8 text-xs">
           <SelectValue placeholder="选择模型" />

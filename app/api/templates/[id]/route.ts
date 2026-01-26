@@ -13,7 +13,11 @@ export async function PATCH(
     }
 
     const { id } = params
-    const { name, description, template, variables } = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
+    const { name, description, template, variables } = body
 
     const existingTemplate = await prisma.promptTemplate.findUnique({
       where: { id }

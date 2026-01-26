@@ -1,5 +1,6 @@
 import { getEmbedding } from '@/lib/ai/zhipu'
 import { prisma } from '@/lib/db/prisma'
+import { Prisma } from '@prisma/client'
 import { vectorStore, type ChunkMetadata } from '@/lib/db/vector-store'
 import { EMBEDDING_DIM } from '@/lib/config'
 
@@ -10,6 +11,7 @@ export const RAG_CONFIG = {
   useHybridSearch: true,
   vectorWeight: 0.7,
   ftsWeight: 0.3,
+  mmrLambda: 0.7, // MMR 算法中相关性权重（0-1，越高越重视相关性）
 }
 
 /**
@@ -48,6 +50,8 @@ export interface RetrievalResult {
   embeddingMs: number
   queryEmbedding: number[]
   retrievalType?: RetrievalType
+  confidence?: number // 置信度分数 (0-1)
+  confidenceLevel?: 'low' | 'medium' | 'high' // 置信度等级
 }
 
 export async function retrieveChunks(params: {
@@ -56,6 +60,8 @@ export async function retrieveChunks(params: {
   sourceIds?: string[]
   topK?: number
   threshold?: number
+  useMMR?: boolean
+  mmrLambda?: number
 }): Promise<RetrievalResult> {
   const startTime = Date.now()
   const {
@@ -64,6 +70,8 @@ export async function retrieveChunks(params: {
     sourceIds,
     topK = RAG_CONFIG.topK,
     threshold = RAG_CONFIG.similarityThreshold,
+    useMMR = true, // 默认启用 MMR
+    mmrLambda = RAG_CONFIG.mmrLambda,
   } = params
 
   const embeddingStartTime = Date.now()
@@ -72,10 +80,13 @@ export async function retrieveChunks(params: {
 
   const retrievalStartTime = Date.now()
   
+  // 检索更多候选结果用于 MMR
+  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK
+  
   const rawChunks = await vectorStore.similaritySearch({
     notebookId,
     queryEmbedding,
-    topK,
+    topK: retrievalTopK,
     threshold,
     sourceIds
   })
@@ -92,7 +103,7 @@ export async function retrieveChunks(params: {
   const sourceMap = new Map(sources.map(s => [s.id, s]))
 
   // ✅ P1-3: 直接使用 ChunkMetadata，无需强制类型转换
-  const chunks: RetrievedChunk[] = rawChunks.map(chunk => {
+  let chunks: RetrievedChunk[] = rawChunks.map(chunk => {
     const source = sourceMap.get(chunk.sourceId)
     return {
       id: chunk.id,
@@ -105,6 +116,16 @@ export async function retrieveChunks(params: {
       metadata: chunk.metadata,  // 类型已保证
     }
   })
+  
+  // 应用 MMR 重排序
+  if (useMMR && chunks.length > 1) {
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+  } else {
+    chunks = chunks.slice(0, topK)
+  }
+  
+  // 计算置信度
+  const { score: confidence, level: confidenceLevel } = calculateConfidence(chunks)
 
   return {
     chunks,
@@ -112,6 +133,226 @@ export async function retrieveChunks(params: {
     retrievalMs,
     embeddingMs,
     queryEmbedding,
+    confidence,
+    confidenceLevel,
+  }
+}
+
+/**
+ * 计算置信度分数
+ * 基于检索结果的相似度分布判断回答质量
+ */
+export function calculateConfidence(chunks: RetrievedChunk[]): {
+  score: number
+  level: 'low' | 'medium' | 'high'
+} {
+  if (chunks.length === 0) {
+    return { score: 0, level: 'low' }
+  }
+  
+  // 1. 最高相似度
+  const maxSimilarity = chunks[0].similarity
+  
+  // 2. 相似度方差（衡量信息集中度）
+  const similarities = chunks.map(c => c.similarity)
+  const avgSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length
+  const variance = similarities.reduce((sum, s) => sum + Math.pow(s - avgSimilarity, 2), 0) / similarities.length
+  
+  // 3. 综合评分
+  // - 最高相似度越高，置信度越高
+  // - 方差越大，说明信息集中在少数 chunk 中，置信度较高
+  // - 方差越小，说明信息分散，置信度降低
+  
+  let score = maxSimilarity
+  
+  // 根据方差调整：方差大时稍微加分，方差小时减分
+  if (variance > 0.05) {
+    score += 0.05 // 信息集中，稍微提升置信度
+  } else if (variance < 0.01) {
+    score -= 0.05 // 信息分散，降低置信度
+  }
+  
+  // 确保分数在 [0, 1] 范围内
+  score = Math.max(0, Math.min(1, score))
+  
+  // 判断置信度等级
+  let level: 'low' | 'medium' | 'high'
+  if (score >= 0.75) {
+    level = 'high'
+  } else if (score >= 0.6) {
+    level = 'medium'
+  } else {
+    level = 'low'
+  }
+  
+  return { score, level }
+}
+
+/**
+ * 计算余弦相似度
+ * 维度不匹配时返回 0 而非抛出异常，避免中断 MMR 流程
+ */
+function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
+  // 维度校验：不匹配时返回 0
+  if (vec1.length !== vec2.length) {
+    console.warn(`[MMR] 向量维度不匹配: ${vec1.length} vs ${vec2.length}，返回相似度 0`)
+    return 0
+  }
+  
+  let dotProduct = 0
+  let norm1 = 0
+  let norm2 = 0
+  
+  for (let i = 0; i < vec1.length; i++) {
+    dotProduct += vec1[i] * vec2[i]
+    norm1 += vec1[i] * vec1[i]
+    norm2 += vec2[i] * vec2[i]
+  }
+  
+  const magnitude = Math.sqrt(norm1) * Math.sqrt(norm2)
+  
+  if (magnitude === 0) return 0
+  
+  return dotProduct / magnitude
+}
+
+/**
+ * MMR (Maximal Marginal Relevance) 重排序算法
+ * 平衡检索结果的相关性和多样性
+ * 
+ * @param chunks 原始检索结果
+ * @param queryEmbedding 查询向量
+ * @param lambda 相关性权重 (0-1)，默认 0.7
+ * @param topK 返回的结果数量
+ * @returns 重排序后的结果
+ * 
+ * 降级策略：
+ * 1. 查询层失败 → 返回原始 chunks
+ * 2. 余弦相似度计算失败 → 返回 0 并继续
+ * 3. rerankeWithMMR 调用失败 → 切换为 chunks.slice(0, topK) 基础截断
+ */
+export async function rerankeWithMMR(
+  chunks: RetrievedChunk[],
+  queryEmbedding: number[],
+  lambda: number = RAG_CONFIG.mmrLambda,
+  topK: number = RAG_CONFIG.topK
+): Promise<RetrievedChunk[]> {
+  if (chunks.length === 0) return []
+  if (chunks.length <= 1) return chunks
+  
+  try {
+    // 限制候选集大小，避免过多计算
+    const candidates = chunks.slice(0, Math.min(20, chunks.length))
+    
+    // 获取所有 chunk 的 embedding（从数据库获取）
+    const chunkEmbeddings = new Map<string, number[]>()
+    
+    // 批量查询 chunk embeddings - 使用类型安全的 Prisma.sql
+    const chunkIds = candidates.map(c => BigInt(c.id))
+    const embeddingRecords = await prisma.$queryRaw<Array<{ id: bigint; embedding: any }>>(
+      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(${chunkIds}::bigint[])`
+    )
+    
+    // 解析 embedding 并进行维度校验
+    for (const record of embeddingRecords) {
+      if (!record.embedding) continue
+      
+      // 兼容两种格式：原生数组 和 JSON 字符串
+      let embedding: number[]
+      try {
+        if (typeof record.embedding === 'string') {
+          embedding = JSON.parse(record.embedding)
+        } else if (Array.isArray(record.embedding)) {
+          embedding = record.embedding
+        } else {
+          console.warn(`[MMR] 跳过无效 embedding 格式: chunk ${record.id}`)
+          continue
+        }
+        
+        // 维度校验：必须匹配 EMBEDDING_DIM
+        if (embedding.length !== EMBEDDING_DIM) {
+          console.warn(`[MMR] 跳过维度不匹配的向量: chunk ${record.id}, 期望 ${EMBEDDING_DIM}, 实际 ${embedding.length}`)
+          continue
+        }
+        
+        chunkEmbeddings.set(record.id.toString(), embedding)
+      } catch (error) {
+        console.warn(`[MMR] 解析 embedding 失败: chunk ${record.id}`, error)
+        // 解析失败则跳过该记录
+        continue
+      }
+    }
+    
+    // 如果没有有效的 embeddings，降级为基础截断
+    if (chunkEmbeddings.size === 0) {
+      console.warn('[MMR] 无有有效的 embeddings，降级为基础截断')
+      return chunks.slice(0, topK)
+    }
+    
+    // 已选集合
+    const selected: RetrievedChunk[] = []
+    const remaining = [...candidates]
+    
+    // 第一个选择相关性最高的
+    if (remaining.length > 0) {
+      const first = remaining[0] // 已经按相关度排序
+      selected.push(first)
+      remaining.shift()
+    }
+    
+    // 迭代选择剩余的 chunks
+    while (selected.length < topK && remaining.length > 0) {
+      let maxScore = -Infinity
+      let maxIndex = 0
+      
+      // 计算每个候选 chunk 的 MMR 分数
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i]
+        const candidateEmbedding = chunkEmbeddings.get(candidate.id)
+        
+        if (!candidateEmbedding) {
+          // 如果没有 embedding，跳过
+          continue
+        }
+        
+        // 相关性：与查询的相似度
+        const relevance = candidate.similarity
+        
+        // 多样性：与已选 chunks 的最大相似度
+        let maxSimilarity = 0
+        for (const selectedChunk of selected) {
+          const selectedEmbedding = chunkEmbeddings.get(selectedChunk.id)
+          if (selectedEmbedding) {
+            // 余弦相似度计算失败时返回 0
+            const similarity = calculateCosineSimilarity(candidateEmbedding, selectedEmbedding)
+            maxSimilarity = Math.max(maxSimilarity, similarity)
+          }
+        }
+        
+        // MMR 分数 = λ * Relevance - (1-λ) * MaxSimilarity
+        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity
+        
+        if (mmrScore > maxScore) {
+          maxScore = mmrScore
+          maxIndex = i
+        }
+      }
+      
+      // 选择 MMR 分数最高的 chunk
+      if (maxScore > -Infinity) {
+        selected.push(remaining[maxIndex])
+        remaining.splice(maxIndex, 1)
+      } else {
+        // 如果所有候选都没有 embedding，停止
+        break
+      }
+    }
+    
+    return selected
+  } catch (error) {
+    // 查询层失败：降级为基础截断
+    console.error('[MMR] 重排序失败，降级为基础截断', error)
+    return chunks.slice(0, topK)
   }
 }
 
@@ -136,6 +377,8 @@ export async function hybridRetrieveChunks(params: {
   threshold?: number
   vectorWeight?: number
   ftsWeight?: number
+  useMMR?: boolean
+  mmrLambda?: number
 }): Promise<RetrievalResult> {
   const startTime = Date.now()
   const {
@@ -146,6 +389,8 @@ export async function hybridRetrieveChunks(params: {
     threshold = RAG_CONFIG.similarityThreshold,
     vectorWeight = RAG_CONFIG.vectorWeight,
     ftsWeight = RAG_CONFIG.ftsWeight,
+    useMMR = true,
+    mmrLambda = RAG_CONFIG.mmrLambda,
   } = params
 
   const embeddingStartTime = Date.now()
@@ -154,11 +399,13 @@ export async function hybridRetrieveChunks(params: {
 
   const retrievalStartTime = Date.now()
   
+  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK
+  
   const rawChunks = await vectorStore.hybridSearch({
     notebookId,
     queryEmbedding,
     queryText: query,
-    topK,
+    topK: retrievalTopK,
     threshold,
     sourceIds,
     vectorWeight,
@@ -176,7 +423,7 @@ export async function hybridRetrieveChunks(params: {
   
   const sourceMap = new Map(sources.map(s => [s.id, s]))
 
-  const chunks: RetrievedChunk[] = rawChunks.map(chunk => {
+  let chunks: RetrievedChunk[] = rawChunks.map(chunk => {
     const source = sourceMap.get(chunk.sourceId)
     return {
       id: chunk.id,
@@ -194,6 +441,16 @@ export async function hybridRetrieveChunks(params: {
       },
     }
   })
+  
+  // 应用 MMR 重排序
+  if (useMMR && chunks.length > 1) {
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+  } else {
+    chunks = chunks.slice(0, topK)
+  }
+  
+  // 计算置信度
+  const { score: confidence, level: confidenceLevel } = calculateConfidence(chunks)
 
   return {
     chunks,
@@ -202,5 +459,7 @@ export async function hybridRetrieveChunks(params: {
     embeddingMs,
     queryEmbedding,
     retrievalType: 'hybrid',
+    confidence,
+    confidenceLevel,
   }
 }

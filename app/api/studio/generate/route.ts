@@ -20,7 +20,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. 解析请求
-    const body = await request.json()
+    // 并行解析请求体 (async-parallel)
+    const [body] = await Promise.all([
+      request.json().catch(() => ({})) // 防止 JSON 解析失败导致整个请求崩溃
+    ])
+
     const { notebookId, type, mode = 'fast', sourceIds } = body as {
       notebookId: string
       type: ArtifactType
