@@ -219,8 +219,9 @@ export function buildMessages(params: {
   userQuestion: string
   chatHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
   useDynamicPrompt?: boolean // 是否启用动态 Prompt
+  confidenceLevel?: 'low' | 'medium' | 'high' // 置信度等级
 }): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
-  const { chunks, userQuestion, chatHistory = [], useDynamicPrompt = true } = params
+  const { chunks, userQuestion, chatHistory = [], useDynamicPrompt = true, confidenceLevel } = params
 
   const context = buildContext(chunks)
   
@@ -229,6 +230,11 @@ export function buildMessages(params: {
   if (useDynamicPrompt) {
     const questionType = classifyQuestion(userQuestion)
     systemPrompt = getSystemPromptByType(questionType)
+  }
+
+  // 如果置信度为 medium，添加谨慎回答的提示
+  if (confidenceLevel === 'medium') {
+    systemPrompt += `\n\n注意：检索到的参考资料相关度可能一般。请在回答时保持谨慎，如果资料不足以完全回答问题，请在回答中说明不确定性，不要强行编造。`
   }
   
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [

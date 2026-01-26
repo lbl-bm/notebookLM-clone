@@ -11,8 +11,9 @@ import { Bubble, Sender } from '@ant-design/x'
 import { XMarkdown } from '@ant-design/x-markdown'
 import type { BubbleItemType } from '@ant-design/x'
 import { Card } from '@/components/ui/card'
-import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target } from 'lucide-react'
-import { Avatar, Tooltip, Button as AntButton } from 'antd'
+import { useToast } from '@/hooks/use-toast'
+import { MessageSquare, FileText, Globe, User, Bot, AlertCircle, Zap, Target, Check, Copy, Trash2 } from 'lucide-react'
+import { Avatar, Tooltip, Popconfirm, Button as AntButton } from 'antd'
 import { useCitation, type Citation } from './citation-context'
 import dynamic from 'next/dynamic'
 import {
@@ -70,6 +71,33 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
     setChatModeState(value)
     localStorage.setItem('chat-model', value)
   }, [])
+  const { toast } = useToast()
+
+  // 删除消息
+  const handleDelete = useCallback(async (messageId: string) => {
+    try {
+      const res = await fetch(`/api/messages/${messageId}`, {
+        method: 'DELETE',
+      })
+      
+      if (!res.ok) {
+        throw new Error('删除失败')
+      }
+      
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+      toast({
+        title: '已删除',
+        description: '消息已删除',
+        variant: 'success',
+      })
+    } catch (error) {
+      toast({
+        title: '操作失败',
+        description: '无法删除消息',
+        variant: 'error',
+      })
+    }
+  }, [toast])
 
   useEffect(() => {
     const stored = localStorage.getItem('chat-model')
@@ -328,6 +356,24 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       placement: 'end' as const,
       variant: 'filled' as const,
       avatar: <Avatar icon={<User size={16} />} style={{ backgroundColor: 'hsl(var(--muted))', color: 'hsl(var(--foreground))' }} />,
+      contentRender: (content: string, info: { key?: string | number }) => (
+        <div className="group relative pr-6">
+          {content}
+          <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Popconfirm
+              title="删除这条消息？"
+              onConfirm={() => handleDelete(info.key as string)}
+              okText="删除"
+              cancelText="取消"
+              placement="topRight"
+            >
+              <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-muted-foreground hover:text-destructive transition-colors">
+                <Trash2 size={12} />
+              </button>
+            </Popconfirm>
+          </div>
+        </div>
+      ),
       styles: {
         content: {
           backgroundColor: 'hsl(var(--muted))',
@@ -345,7 +391,24 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
       contentRender: (content: string, info: { key?: string | number }) => {
         // 找到对应的消息获取 citations
         const msg = messages.find(m => m.id === info.key)
-        return renderMarkdown(content, msg?.citations as Citation[] | undefined)
+        return (
+          <div className="group relative pr-6">
+            {renderMarkdown(content, msg?.citations as Citation[] | undefined)}
+            <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <Popconfirm
+                title="删除这条消息？"
+                onConfirm={() => handleDelete(info.key as string)}
+                okText="删除"
+                cancelText="取消"
+                placement="topLeft"
+              >
+                <button className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-muted-foreground hover:text-destructive transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              </Popconfirm>
+            </div>
+          </div>
+        )
       },
       styles: {
         content: {
@@ -358,7 +421,7 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
         },
       },
     },
-  }), [messages, renderMarkdown])
+  }), [messages, renderMarkdown, handleDelete])
 
   return (
     <Card className="h-full flex flex-col shadow-sm overflow-hidden">

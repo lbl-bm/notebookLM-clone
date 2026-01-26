@@ -19,6 +19,14 @@ import {
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 
 interface SearchResult {
   title: string
@@ -51,6 +59,7 @@ export function SourceSearchBox({
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set<number>())
   const [isExpanded, setIsExpanded] = useState(true)
+  const [searchMode, setSearchMode] = useState<'precision' | 'exploration' | 'deep'>('exploration')
   const { toast } = useToast()
 
   const isModal = mode === 'modal'
@@ -166,7 +175,11 @@ export function SourceSearchBox({
       const res = await fetch('/api/sources/web-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: value }),
+        body: JSON.stringify({ 
+          query: value,
+          type: searchMode,
+          notebookId, // 传递 notebookId 用于去重
+        }),
       })
 
       const data = await res.json().catch(() => null)
@@ -218,29 +231,45 @@ export function SourceSearchBox({
           ${isModal ? 'shadow-sm' : ''}
         `}
       >
-        <div className="flex items-center px-4 py-3">
-          <Search className="h-4 w-4 text-slate-400 mr-3 flex-shrink-0" />
+        <div className="relative flex items-center">
+          <Search className="absolute left-3 h-4 w-4 text-muted-foreground" />
           <input
-            type="text"
-            placeholder="在网络中搜索知识来源"
             value={searchValue}
-            onChange={(e) => {
-              setSearchValue(e.target.value)
-            }}
+            onChange={(e) => setSearchValue(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            className="flex-1 bg-transparent border-none outline-none text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
+            placeholder="输入关键词搜索..."
+            className={cn(
+              "h-10 w-full rounded-md border border-input bg-background pl-9 pr-24 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+              !isModal && "pr-24" // 侧边栏模式留出更多空间
+            )}
+            disabled={isSearching}
           />
+          
+          {/* 搜索模式选择器 - 仅在非 URL 输入时显示 */}
+          {!isValidUrl(searchValue) && searchValue && (
+            <div className="absolute right-10 top-1/2 -translate-y-1/2">
+              <Select
+                value={searchMode}
+                onValueChange={(v) => setSearchMode(v as any)}
+              >
+                <SelectTrigger className="h-7 w-[65px] border-0 bg-transparent px-2 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground focus:ring-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end" className="min-w-[75px]">
+                  <SelectItem value="precision">精确</SelectItem>
+                  <SelectItem value="exploration">探索</SelectItem>
+                  <SelectItem value="deep">深度</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {searchValue && (
             <button
-              className="h-7 w-7 flex items-center justify-center text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-50"
-              onClick={handleSearch}
-              disabled={isSearching}
+              onClick={() => setSearchValue('')}
+              className="absolute right-3 text-muted-foreground hover:text-foreground"
             >
-              {isSearching ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <ArrowRight className="h-4 w-4" />
-              )}
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>
