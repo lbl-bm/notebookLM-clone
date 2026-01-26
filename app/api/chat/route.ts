@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     const chunks = deduplicateChunks(retrievalResult.chunks)
     const citations = buildCitations(chunks)
 
-    // 构造检索详情
+    // 构造检索详情（包含置信度信息）
     const retrievalDetails = {
       query: userQuestion,
       retrievalParams: {
@@ -119,14 +119,17 @@ export async function POST(request: Request) {
         metadata: c.metadata,
         scores: c.scores || null,
       })),
+      confidence: retrievalResult.confidence,
+      confidenceLevel: retrievalResult.confidenceLevel,
       timing: {
         embedding: retrievalResult.embeddingMs,
         retrieval: retrievalResult.retrievalMs,
       }
     }
 
-    // 2. 判断是否有依据
-    if (!retrievalResult.hasEvidence) {
+    // 2. 判断是否有依据 (无 chunks 或 低置信度)
+    // 如果置信度过低(<0.6)，即使有 chunks 也视为无依据，避免幻觉
+    if (!retrievalResult.hasEvidence || retrievalResult.confidenceLevel === 'low') {
       // 无依据，直接返回固定回复
       await prisma.message.create({
         data: {
@@ -142,6 +145,8 @@ export async function POST(request: Request) {
             model: 'none',
             topK: chunks.length,
             chunkCount: 0,
+            confidence: retrievalResult.confidence,
+            confidenceLevel: retrievalResult.confidenceLevel,
             retrievalDetails: retrievalDetails as unknown as Prisma.InputJsonValue,
           },
         },
@@ -167,6 +172,8 @@ export async function POST(request: Request) {
       chunks,
       userQuestion,
       chatHistory,
+      useDynamicPrompt: true, // 启用动态 Prompt 选择
+      confidenceLevel: retrievalResult.confidenceLevel, // 传入置信度等级，影响 Prompt
     })
 
     // 4. 调用 API 流式生成

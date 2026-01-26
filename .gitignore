@@ -3,7 +3,8 @@
 .vscode/settings.json
 .idea/
 .trae/
-.qoder/
+.qoder/quests
+.qoder/repowiki/zh/meta
 *.swp
 *.swo
 *~
