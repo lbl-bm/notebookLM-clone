@@ -1,17 +1,58 @@
 /**
  * Notebook 内容组件
  * 三栏可调整布局
+ * 
+ * 性能优化：
+ * - 使用 dynamic import 延迟加载重型组件
+ * - SourceSidebar 和 StudioPanel 使用动态导入
  */
 
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, Suspense } from 'react'
+import dynamic from 'next/dynamic'
 import { ResizablePanel } from '@/components/common/resizable-panel'
-import { SourceSidebar } from './source-sidebar'
 import { ChatPanel } from './chat-panel'
-import { StudioPanel } from './studio-panel'
 import { CitationProvider } from './citation-context'
 import { Card } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Loader2 } from 'lucide-react'
+
+// 动态导入重型组件（减少初始 bundle 体积）
+const SourceSidebar = dynamic(
+  () => import('./source-sidebar').then(mod => ({ default: mod.SourceSidebar })),
+  {
+    loading: () => (
+      <div className="h-full p-4 space-y-4">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-10 w-full" />
+        <div className="space-y-2">
+          {[1, 2, 3].map(i => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
+      </div>
+    ),
+    ssr: false, // 客户端组件，禁用 SSR
+  }
+)
+
+const StudioPanel = dynamic(
+  () => import('./studio-panel').then(mod => ({ default: mod.StudioPanel })),
+  {
+    loading: () => (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-24" />
+        <div className="space-y-2">
+          {[1, 2].map(i => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      </div>
+    ),
+    ssr: false,
+  }
+)
 
 interface Source {
   id: string
