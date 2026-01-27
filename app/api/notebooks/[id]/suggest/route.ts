@@ -1,24 +1,51 @@
+/**
+ * 建议问题 API
+ * POST /api/notebooks/:id/suggest
+ * 
+ * 性能优化：
+ * - 并行化用户验证和 notebook 查询
+ * - 添加简单的内存缓存
+ */
+
 import { prisma } from '@/lib/db/prisma'
 import { getCurrentUserId } from '@/lib/db/supabase'
 import { zhipuConfig } from '@/lib/config'
 
+// 简单的内存缓存（生产环境建议使用 Redis）
+const suggestCache = new Map<string, { questions: string[], timestamp: number }>()
+const CACHE_TTL = 5 * 60 * 1000 // 5 分钟缓存
+
+interface RouteParams {
+  params: Promise<{ id: string }>
+}
+
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: RouteParams
 ) {
   try {
-    const userId = await getCurrentUserId()
+    const { id: notebookId } = await params
+
+    // 检查缓存
+    const cached = suggestCache.get(notebookId)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return new Response(JSON.stringify({ questions: cached.questions, cached: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    // 并行获取用户 ID 和 Notebook 所有权验证（性能优化）
+    const [userId, notebook] = await Promise.all([
+      getCurrentUserId(),
+      prisma.notebook.findUnique({
+        where: { id: notebookId },
+        select: { ownerId: true },
+      }),
+    ])
+
     if (!userId) {
       return new Response('未登录', { status: 401 })
     }
-
-    const notebookId = params.id
-
-    // 验证 Notebook 所有权
-    const notebook = await prisma.notebook.findUnique({
-      where: { id: notebookId },
-      select: { ownerId: true },
-    })
 
     if (!notebook) {
       return new Response('Notebook 不存在', { status: 404 })
@@ -87,6 +114,19 @@ export async function POST(
       .map((line: string) => line.trim())
       .filter((line: string) => line.length > 0 && !line.match(/^\d+\./)) // 过滤空行和纯序号
       .slice(0, 5)
+
+    // 更新缓存
+    suggestCache.set(notebookId, { questions, timestamp: Date.now() })
+
+    // 清理过期缓存（避免内存泄漏）
+    if (suggestCache.size > 100) {
+      const now = Date.now()
+      for (const [key, value] of suggestCache.entries()) {
+        if (now - value.timestamp > CACHE_TTL) {
+          suggestCache.delete(key)
+        }
+      }
+    }
 
     return new Response(JSON.stringify({ questions }), {
       headers: { 'Content-Type': 'application/json' },

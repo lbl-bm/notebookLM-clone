@@ -17,26 +17,30 @@ interface RouteParams {
 export async function GET(request: Request, { params }: RouteParams) {
   try {
     const { id } = await params
-    const userId = await getCurrentUserId()
+    
+    // 并行获取用户 ID 和 Notebook 数据（性能优化）
+    const [userId, notebook] = await Promise.all([
+      getCurrentUserId(),
+      prisma.notebook.findUnique({
+        where: { id },
+        include: {
+          sources: {
+            orderBy: { createdAt: 'desc' },
+          },
+          messages: {
+            orderBy: { createdAt: 'asc' },
+            take: 50, // 最近 50 条消息
+          },
+          artifacts: {
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      }),
+    ])
+
     if (!userId) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
-
-    const notebook = await prisma.notebook.findUnique({
-      where: { id },
-      include: {
-        sources: {
-          orderBy: { createdAt: 'desc' },
-        },
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          take: 50, // 最近 50 条消息
-        },
-        artifacts: {
-          orderBy: { createdAt: 'desc' },
-        },
-      },
-    })
 
     if (!notebook) {
       return NextResponse.json({ error: 'Notebook 不存在' }, { status: 404 })
@@ -44,11 +48,11 @@ export async function GET(request: Request, { params }: RouteParams) {
 
     await verifyOwnership(notebook.ownerId, userId)
 
-    // 更新最近打开时间
-    await prisma.notebook.update({
+    // 异步更新最近打开时间（不阻塞响应）
+    prisma.notebook.update({
       where: { id },
       data: { lastOpenedAt: new Date() },
-    })
+    }).catch(e => console.error('[updateLastOpenedAt] 失败:', e))
 
     return NextResponse.json(notebook)
   } catch (error) {
