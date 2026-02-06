@@ -1,25 +1,25 @@
 /**
  * Notebook 详情页面
  * US-002 & US-003: 查看和管理 Notebook，上传知识源
- * 
+ *
  * 性能优化：
- * - 并行化数据查询
+ * - 并行化 auth 和完整 notebook 查询（消除重复查询）
  * - 异步更新 lastOpenedAt（不阻塞页面加载）
- * - 使用 Suspense 进行流式渲染
+ * - Queue 查询放入 Suspense 流式渲染
  */
 
-import { redirect, notFound } from 'next/navigation'
-import { Suspense } from 'react'
-import { createClient } from '@/lib/supabase/server'
-import { prisma } from '@/lib/db/prisma'
-import { UserNav } from '@/components/common/user-nav'
-import { BackButton } from '@/components/common/back-button'
-import { NotebookContent } from '@/components/notebook/notebook-content'
-import { BookOpen, Loader2 } from 'lucide-react'
-import { Skeleton } from '@/components/ui/skeleton'
+import { redirect, notFound } from "next/navigation";
+import { Suspense } from "react";
+import { createClient } from "@/lib/supabase/server";
+import { prisma } from "@/lib/db/prisma";
+import { UserNav } from "@/components/common/user-nav";
+import { BackButton } from "@/components/common/back-button";
+import { NotebookContent } from "@/components/notebook/notebook-content";
+import { BookOpen, Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface PageProps {
-  params: Promise<{ id: string }>
+  params: Promise<{ id: string }>;
 }
 
 // 异步更新最近打开时间（不阻塞页面加载）
@@ -28,10 +28,10 @@ async function updateLastOpenedAt(id: string) {
     await prisma.notebook.update({
       where: { id },
       data: { lastOpenedAt: new Date() },
-    })
+    });
   } catch (e) {
     // 静默失败，不影响用户体验
-    console.error('[updateLastOpenedAt] 失败:', e)
+    console.error("[updateLastOpenedAt] 失败:", e);
   }
 }
 
@@ -45,7 +45,7 @@ function NotebookContentSkeleton() {
           <Skeleton className="h-8 w-32" />
           <Skeleton className="h-10 w-full" />
           <div className="space-y-2">
-            {[1, 2, 3].map(i => (
+            {[1, 2, 3].map((i) => (
               <Skeleton key={i} className="h-16 w-full" />
             ))}
           </div>
@@ -63,87 +63,73 @@ function NotebookContentSkeleton() {
         <div className="h-full bg-card rounded-lg border p-4 space-y-4">
           <Skeleton className="h-8 w-24" />
           <div className="space-y-2">
-            {[1, 2].map(i => (
+            {[1, 2].map((i) => (
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
         </div>
       </div>
     </main>
-  )
+  );
 }
 
-// 异步加载 Notebook 内容的组件
-async function NotebookContentLoader({ 
-  notebookId, 
-  userId 
-}: { 
-  notebookId: string
-  userId: string 
-}) {
-  // 先获取 Notebook 数据
-  const notebook = await prisma.notebook.findUnique({
-    where: { id: notebookId },
+// 类型定义：完整 notebook 查询结果
+type FullNotebook = NonNullable<Awaited<ReturnType<typeof fetchFullNotebook>>>;
+
+async function fetchFullNotebook(id: string) {
+  return prisma.notebook.findUnique({
+    where: { id },
     include: {
       sources: {
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       },
       messages: {
-        orderBy: { createdAt: 'asc' },
+        orderBy: { createdAt: "asc" },
         take: 50,
       },
       _count: {
         select: { sources: true, messages: true },
       },
     },
-  })
+  });
+}
 
-  // 检查 Notebook 是否存在
-  if (!notebook) {
-    notFound()
-  }
-
-  // 检查权限
-  if (notebook.ownerId !== userId) {
-    redirect('/403')
-  }
-
-  // 异步更新 lastOpenedAt（不阻塞渲染）
-  updateLastOpenedAt(notebookId)
-
+// 异步加载 Queue 数据并渲染内容
+async function NotebookWithQueue({ notebook }: { notebook: FullNotebook }) {
   // 获取 source IDs 后再查询 queue 数据（只有在有 sources 时才查询）
-  const sourceIds = notebook.sources.map(s => s.id)
-  const queueRows = sourceIds.length > 0
-    ? await prisma.processingQueue.findMany({
-        where: { sourceId: { in: sourceIds } },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      })
-    : []
+  const sourceIds = notebook.sources.map((s) => s.id);
+  const queueRows =
+    sourceIds.length > 0
+      ? await prisma.processingQueue.findMany({
+          where: { sourceId: { in: sourceIds } },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        })
+      : [];
 
   // 处理 queue 数据
-  const latestQueueBySourceId = new Map<string, typeof queueRows[number]>()
+  const latestQueueBySourceId = new Map<string, (typeof queueRows)[number]>();
   for (const row of queueRows) {
     if (!latestQueueBySourceId.has(row.sourceId)) {
-      latestQueueBySourceId.set(row.sourceId, row)
+      latestQueueBySourceId.set(row.sourceId, row);
     }
   }
 
   const pendingQueue = Array.from(latestQueueBySourceId.values())
-    .filter(r => r.status === 'pending')
+    .filter((r) => r.status === "pending")
     .sort((a, b) => {
-      if (a.priority !== b.priority) return b.priority - a.priority
-      return a.createdAt.getTime() - b.createdAt.getTime()
-    })
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
 
-  const queuePositionBySourceId = new Map<string, number>()
+  const queuePositionBySourceId = new Map<string, number>();
   pendingQueue.forEach((r, index) => {
-    queuePositionBySourceId.set(r.sourceId, index + 1)
-  })
+    queuePositionBySourceId.set(r.sourceId, index + 1);
+  });
 
   const notebookWithQueue = {
     ...notebook,
-    sources: notebook.sources.map(s => {
-      const q = latestQueueBySourceId.get(s.id)
+    sources: notebook.sources.map((s) => {
+      const q = latestQueueBySourceId.get(s.id);
       return {
         ...s,
         queueStatus: q?.status ?? null,
@@ -152,39 +138,38 @@ async function NotebookContentLoader({
         queueErrorMessage: q?.errorMessage ?? null,
         queuedAt: q?.createdAt ?? null,
         queuePosition: queuePositionBySourceId.get(s.id) ?? null,
-      }
+      };
     }),
-  }
+  };
 
-  return <NotebookContent notebook={notebookWithQueue} />
+  return <NotebookContent notebook={notebookWithQueue} />;
 }
 
 export default async function NotebookDetailPage({ params }: PageProps) {
-  const { id } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { id } = await params;
+
+  // 并行获取 auth 和完整 notebook 数据（消除重复查询）
+  const [authResult, notebook] = await Promise.all([
+    createClient().then((c) => c.auth.getUser()),
+    fetchFullNotebook(id),
+  ]);
+
+  const user = authResult.data.user;
 
   if (!user) {
-    redirect('/auth/login')
+    redirect("/auth/login");
   }
 
-  // 快速获取 Notebook 基本信息（用于 Header）
-  const notebookBasic = await prisma.notebook.findUnique({
-    where: { id },
-    select: { 
-      id: true, 
-      title: true, 
-      ownerId: true 
-    },
-  })
-
-  if (!notebookBasic) {
-    notFound()
+  if (!notebook) {
+    notFound();
   }
 
-  if (notebookBasic.ownerId !== user.id) {
-    redirect('/403')
+  if (notebook.ownerId !== user.id) {
+    redirect("/403");
   }
+
+  // 异步更新 lastOpenedAt（不阻塞渲染）
+  updateLastOpenedAt(id);
 
   return (
     <div className="h-screen bg-muted/30 flex flex-col overflow-hidden">
@@ -198,7 +183,7 @@ export default async function NotebookDetailPage({ params }: PageProps) {
                 <BookOpen className="w-4 h-4 text-primary-foreground" />
               </div>
               <h1 className="text-lg font-semibold truncate max-w-md">
-                {notebookBasic.title}
+                {notebook.title}
               </h1>
             </div>
           </div>
@@ -206,10 +191,10 @@ export default async function NotebookDetailPage({ params }: PageProps) {
         </div>
       </header>
 
-      {/* Main Content - 流式加载 */}
+      {/* Main Content - Queue 数据流式加载 */}
       <Suspense fallback={<NotebookContentSkeleton />}>
-        <NotebookContentLoader notebookId={id} userId={user.id} />
+        <NotebookWithQueue notebook={notebook} />
       </Suspense>
     </div>
-  )
+  );
 }

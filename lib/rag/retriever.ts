@@ -1,8 +1,8 @@
-import { getEmbedding } from '@/lib/ai/zhipu'
-import { prisma } from '@/lib/db/prisma'
-import { Prisma } from '@prisma/client'
-import { vectorStore, type ChunkMetadata } from '@/lib/db/vector-store'
-import { EMBEDDING_DIM } from '@/lib/config'
+import { getEmbedding } from "@/lib/ai/zhipu";
+import { prisma } from "@/lib/db/prisma";
+import { Prisma } from "@prisma/client";
+import { vectorStore, type ChunkMetadata } from "@/lib/db/vector-store";
+import { EMBEDDING_DIM } from "@/lib/config";
 
 export const RAG_CONFIG = {
   topK: 8,
@@ -12,58 +12,58 @@ export const RAG_CONFIG = {
   vectorWeight: 0.7,
   ftsWeight: 0.3,
   mmrLambda: 0.7, // MMR 算法中相关性权重（0-1，越高越重视相关性）
-}
+};
 
 /**
  * 检索类型
  */
-export type RetrievalType = 'vector' | 'hybrid' | 'fts'
+export type RetrievalType = "vector" | "hybrid" | "fts";
 
 /**
  * 检索得分详情
  */
 export interface RetrievalScores {
-  vectorScore?: number
-  ftsScore?: number
-  combinedScore?: number
+  vectorScore?: number;
+  ftsScore?: number;
+  combinedScore?: number;
 }
 
 /**
  * ✅ P1-3: 使用类型安全的 ChunkMetadata
  */
 export interface RetrievedChunk {
-  id: string
-  sourceId: string
-  sourceTitle: string
-  sourceType: 'file' | 'url'
-  chunkIndex: number
-  content: string
-  similarity: number
-  metadata: ChunkMetadata  // 使用标准接口
-  scores?: RetrievalScores
+  id: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceType: "file" | "url";
+  chunkIndex: number;
+  content: string;
+  similarity: number;
+  metadata: ChunkMetadata; // 使用标准接口
+  scores?: RetrievalScores;
 }
 
 export interface RetrievalResult {
-  chunks: RetrievedChunk[]
-  hasEvidence: boolean
-  retrievalMs: number
-  embeddingMs: number
-  queryEmbedding: number[]
-  retrievalType?: RetrievalType
-  confidence?: number // 置信度分数 (0-1)
-  confidenceLevel?: 'low' | 'medium' | 'high' // 置信度等级
+  chunks: RetrievedChunk[];
+  hasEvidence: boolean;
+  retrievalMs: number;
+  embeddingMs: number;
+  queryEmbedding: number[];
+  retrievalType?: RetrievalType;
+  confidence?: number; // 置信度分数 (0-1)
+  confidenceLevel?: "low" | "medium" | "high"; // 置信度等级
 }
 
 export async function retrieveChunks(params: {
-  notebookId: string
-  query: string
-  sourceIds?: string[]
-  topK?: number
-  threshold?: number
-  useMMR?: boolean
-  mmrLambda?: number
+  notebookId: string;
+  query: string;
+  sourceIds?: string[];
+  topK?: number;
+  threshold?: number;
+  useMMR?: boolean;
+  mmrLambda?: number;
 }): Promise<RetrievalResult> {
-  const startTime = Date.now()
+  const startTime = Date.now();
   const {
     notebookId,
     query,
@@ -72,60 +72,61 @@ export async function retrieveChunks(params: {
     threshold = RAG_CONFIG.similarityThreshold,
     useMMR = true, // 默认启用 MMR
     mmrLambda = RAG_CONFIG.mmrLambda,
-  } = params
+  } = params;
 
-  const embeddingStartTime = Date.now()
-  const queryEmbedding = await getEmbedding(query)
-  const embeddingMs = Date.now() - embeddingStartTime
+  const embeddingStartTime = Date.now();
+  const queryEmbedding = await getEmbedding(query);
+  const embeddingMs = Date.now() - embeddingStartTime;
 
-  const retrievalStartTime = Date.now()
-  
+  const retrievalStartTime = Date.now();
+
   // 检索更多候选结果用于 MMR
-  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK
-  
+  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK;
+
   const rawChunks = await vectorStore.similaritySearch({
     notebookId,
     queryEmbedding,
     topK: retrievalTopK,
     threshold,
-    sourceIds
-  })
+    sourceIds,
+  });
 
-  const retrievalMs = Date.now() - retrievalStartTime
+  const retrievalMs = Date.now() - retrievalStartTime;
 
-  const foundSourceIds = [...new Set(rawChunks.map(c => c.sourceId))]
-  
+  const foundSourceIds = [...new Set(rawChunks.map((c) => c.sourceId))];
+
   const sources = await prisma.source.findMany({
     where: { id: { in: foundSourceIds } },
-    select: { id: true, title: true, type: true }
-  })
-  
-  const sourceMap = new Map(sources.map(s => [s.id, s]))
+    select: { id: true, title: true, type: true },
+  });
+
+  const sourceMap = new Map(sources.map((s) => [s.id, s]));
 
   // ✅ P1-3: 直接使用 ChunkMetadata，无需强制类型转换
-  let chunks: RetrievedChunk[] = rawChunks.map(chunk => {
-    const source = sourceMap.get(chunk.sourceId)
+  let chunks: RetrievedChunk[] = rawChunks.map((chunk) => {
+    const source = sourceMap.get(chunk.sourceId);
     return {
       id: chunk.id,
       sourceId: chunk.sourceId,
-      sourceTitle: source?.title || '未知来源',
-      sourceType: (source?.type as 'file' | 'url') || 'file',
+      sourceTitle: source?.title || "未知来源",
+      sourceType: (source?.type as "file" | "url") || "file",
       chunkIndex: chunk.chunkIndex,
       content: chunk.content,
       similarity: chunk.similarity,
-      metadata: chunk.metadata,  // 类型已保证
-    }
-  })
-  
+      metadata: chunk.metadata, // 类型已保证
+    };
+  });
+
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK);
   } else {
-    chunks = chunks.slice(0, topK)
+    chunks = chunks.slice(0, topK);
   }
-  
+
   // 计算置信度
-  const { score: confidence, level: confidenceLevel } = calculateConfidence(chunks)
+  const { score: confidence, level: confidenceLevel } =
+    calculateConfidence(chunks);
 
   return {
     chunks,
@@ -135,7 +136,7 @@ export async function retrieveChunks(params: {
     queryEmbedding,
     confidence,
     confidenceLevel,
-  }
+  };
 }
 
 /**
@@ -143,49 +144,52 @@ export async function retrieveChunks(params: {
  * 基于检索结果的相似度分布判断回答质量
  */
 export function calculateConfidence(chunks: RetrievedChunk[]): {
-  score: number
-  level: 'low' | 'medium' | 'high'
+  score: number;
+  level: "low" | "medium" | "high";
 } {
   if (chunks.length === 0) {
-    return { score: 0, level: 'low' }
+    return { score: 0, level: "low" };
   }
-  
+
   // 1. 最高相似度
-  const maxSimilarity = chunks[0].similarity
-  
+  const maxSimilarity = chunks[0].similarity;
+
   // 2. 相似度方差（衡量信息集中度）
-  const similarities = chunks.map(c => c.similarity)
-  const avgSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length
-  const variance = similarities.reduce((sum, s) => sum + Math.pow(s - avgSimilarity, 2), 0) / similarities.length
-  
+  const similarities = chunks.map((c) => c.similarity);
+  const avgSimilarity =
+    similarities.reduce((a, b) => a + b, 0) / similarities.length;
+  const variance =
+    similarities.reduce((sum, s) => sum + Math.pow(s - avgSimilarity, 2), 0) /
+    similarities.length;
+
   // 3. 综合评分
   // - 最高相似度越高，置信度越高
   // - 方差越大，说明信息集中在少数 chunk 中，置信度较高
   // - 方差越小，说明信息分散，置信度降低
-  
-  let score = maxSimilarity
-  
+
+  let score = maxSimilarity;
+
   // 根据方差调整：方差大时稍微加分，方差小时减分
   if (variance > 0.05) {
-    score += 0.05 // 信息集中，稍微提升置信度
+    score += 0.05; // 信息集中，稍微提升置信度
   } else if (variance < 0.01) {
-    score -= 0.05 // 信息分散，降低置信度
+    score -= 0.05; // 信息分散，降低置信度
   }
-  
+
   // 确保分数在 [0, 1] 范围内
-  score = Math.max(0, Math.min(1, score))
-  
+  score = Math.max(0, Math.min(1, score));
+
   // 判断置信度等级
-  let level: 'low' | 'medium' | 'high'
+  let level: "low" | "medium" | "high";
   if (score >= 0.75) {
-    level = 'high'
+    level = "high";
   } else if (score >= 0.6) {
-    level = 'medium'
+    level = "medium";
   } else {
-    level = 'low'
+    level = "low";
   }
-  
-  return { score, level }
+
+  return { score, level };
 }
 
 /**
@@ -195,37 +199,39 @@ export function calculateConfidence(chunks: RetrievedChunk[]): {
 function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
   // 维度校验：不匹配时返回 0
   if (vec1.length !== vec2.length) {
-    console.warn(`[MMR] 向量维度不匹配: ${vec1.length} vs ${vec2.length}，返回相似度 0`)
-    return 0
+    console.warn(
+      `[MMR] 向量维度不匹配: ${vec1.length} vs ${vec2.length}，返回相似度 0`,
+    );
+    return 0;
   }
-  
-  let dotProduct = 0
-  let norm1 = 0
-  let norm2 = 0
-  
+
+  let dotProduct = 0;
+  let norm1 = 0;
+  let norm2 = 0;
+
   for (let i = 0; i < vec1.length; i++) {
-    dotProduct += vec1[i] * vec2[i]
-    norm1 += vec1[i] * vec1[i]
-    norm2 += vec2[i] * vec2[i]
+    dotProduct += vec1[i] * vec2[i];
+    norm1 += vec1[i] * vec1[i];
+    norm2 += vec2[i] * vec2[i];
   }
-  
-  const magnitude = Math.sqrt(norm1) * Math.sqrt(norm2)
-  
-  if (magnitude === 0) return 0
-  
-  return dotProduct / magnitude
+
+  const magnitude = Math.sqrt(norm1) * Math.sqrt(norm2);
+
+  if (magnitude === 0) return 0;
+
+  return dotProduct / magnitude;
 }
 
 /**
  * MMR (Maximal Marginal Relevance) 重排序算法
  * 平衡检索结果的相关性和多样性
- * 
+ *
  * @param chunks 原始检索结果
  * @param queryEmbedding 查询向量
  * @param lambda 相关性权重 (0-1)，默认 0.7
  * @param topK 返回的结果数量
  * @returns 重排序后的结果
- * 
+ *
  * 降级策略：
  * 1. 查询层失败 → 返回原始 chunks
  * 2. 余弦相似度计算失败 → 返回 0 并继续
@@ -235,134 +241,141 @@ export async function rerankeWithMMR(
   chunks: RetrievedChunk[],
   queryEmbedding: number[],
   lambda: number = RAG_CONFIG.mmrLambda,
-  topK: number = RAG_CONFIG.topK
+  topK: number = RAG_CONFIG.topK,
 ): Promise<RetrievedChunk[]> {
-  if (chunks.length === 0) return []
-  if (chunks.length <= 1) return chunks
-  
+  if (chunks.length === 0) return [];
+  if (chunks.length <= 1) return chunks;
+
   try {
     // 限制候选集大小，避免过多计算
-    const candidates = chunks.slice(0, Math.min(20, chunks.length))
-    
+    const candidates = chunks.slice(0, Math.min(20, chunks.length));
+
     // 获取所有 chunk 的 embedding（从数据库获取）
-    const chunkEmbeddings = new Map<string, number[]>()
-    
+    const chunkEmbeddings = new Map<string, number[]>();
+
     // 批量查询 chunk embeddings - 使用类型安全的 Prisma.sql
-    const chunkIds = candidates.map(c => BigInt(c.id))
-    const embeddingRecords = await prisma.$queryRaw<Array<{ id: bigint; embedding: any }>>(
-      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(${chunkIds}::bigint[])`
-    )
-    
+    const chunkIds = candidates.map((c) => BigInt(c.id));
+    const embeddingRecords = await prisma.$queryRaw<
+      Array<{ id: bigint; embedding: any }>
+    >(
+      Prisma.sql`SELECT id, embedding FROM document_chunks WHERE id = ANY(${chunkIds}::bigint[])`,
+    );
+
     // 解析 embedding 并进行维度校验
     for (const record of embeddingRecords) {
-      if (!record.embedding) continue
-      
+      if (!record.embedding) continue;
+
       // 兼容两种格式：原生数组 和 JSON 字符串
-      let embedding: number[]
+      let embedding: number[];
       try {
-        if (typeof record.embedding === 'string') {
-          embedding = JSON.parse(record.embedding)
+        if (typeof record.embedding === "string") {
+          embedding = JSON.parse(record.embedding);
         } else if (Array.isArray(record.embedding)) {
-          embedding = record.embedding
+          embedding = record.embedding;
         } else {
-          console.warn(`[MMR] 跳过无效 embedding 格式: chunk ${record.id}`)
-          continue
+          console.warn(`[MMR] 跳过无效 embedding 格式: chunk ${record.id}`);
+          continue;
         }
-        
+
         // 维度校验：必须匹配 EMBEDDING_DIM
         if (embedding.length !== EMBEDDING_DIM) {
-          console.warn(`[MMR] 跳过维度不匹配的向量: chunk ${record.id}, 期望 ${EMBEDDING_DIM}, 实际 ${embedding.length}`)
-          continue
+          console.warn(
+            `[MMR] 跳过维度不匹配的向量: chunk ${record.id}, 期望 ${EMBEDDING_DIM}, 实际 ${embedding.length}`,
+          );
+          continue;
         }
-        
-        chunkEmbeddings.set(record.id.toString(), embedding)
+
+        chunkEmbeddings.set(record.id.toString(), embedding);
       } catch (error) {
-        console.warn(`[MMR] 解析 embedding 失败: chunk ${record.id}`, error)
+        console.warn(`[MMR] 解析 embedding 失败: chunk ${record.id}`, error);
         // 解析失败则跳过该记录
-        continue
+        continue;
       }
     }
-    
+
     // 如果没有有效的 embeddings，降级为基础截断
     if (chunkEmbeddings.size === 0) {
-      console.warn('[MMR] 无有有效的 embeddings，降级为基础截断')
-      return chunks.slice(0, topK)
+      console.warn("[MMR] 无有有效的 embeddings，降级为基础截断");
+      return chunks.slice(0, topK);
     }
-    
+
     // 已选集合
-    const selected: RetrievedChunk[] = []
-    const remaining = [...candidates]
-    
+    const selected: RetrievedChunk[] = [];
+    const remaining = [...candidates];
+
     // 第一个选择相关性最高的
     if (remaining.length > 0) {
-      const first = remaining[0] // 已经按相关度排序
-      selected.push(first)
-      remaining.shift()
+      const first = remaining[0]; // 已经按相关度排序
+      selected.push(first);
+      remaining.shift();
     }
-    
+
     // 迭代选择剩余的 chunks
     while (selected.length < topK && remaining.length > 0) {
-      let maxScore = -Infinity
-      let maxIndex = 0
-      
+      let maxScore = -Infinity;
+      let maxIndex = 0;
+
       // 计算每个候选 chunk 的 MMR 分数
       for (let i = 0; i < remaining.length; i++) {
-        const candidate = remaining[i]
-        const candidateEmbedding = chunkEmbeddings.get(candidate.id)
-        
+        const candidate = remaining[i];
+        const candidateEmbedding = chunkEmbeddings.get(candidate.id);
+
         if (!candidateEmbedding) {
           // 如果没有 embedding，跳过
-          continue
+          continue;
         }
-        
+
         // 相关性：与查询的相似度
-        const relevance = candidate.similarity
-        
+        const relevance = candidate.similarity;
+
         // 多样性：与已选 chunks 的最大相似度
-        let maxSimilarity = 0
+        let maxSimilarity = 0;
         for (const selectedChunk of selected) {
-          const selectedEmbedding = chunkEmbeddings.get(selectedChunk.id)
+          const selectedEmbedding = chunkEmbeddings.get(selectedChunk.id);
           if (selectedEmbedding) {
             // 余弦相似度计算失败时返回 0
-            const similarity = calculateCosineSimilarity(candidateEmbedding, selectedEmbedding)
-            maxSimilarity = Math.max(maxSimilarity, similarity)
+            const similarity = calculateCosineSimilarity(
+              candidateEmbedding,
+              selectedEmbedding,
+            );
+            maxSimilarity = Math.max(maxSimilarity, similarity);
           }
         }
-        
+
         // MMR 分数 = λ * Relevance - (1-λ) * MaxSimilarity
-        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity
-        
+        const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity;
+
         if (mmrScore > maxScore) {
-          maxScore = mmrScore
-          maxIndex = i
+          maxScore = mmrScore;
+          maxIndex = i;
         }
       }
-      
+
       // 选择 MMR 分数最高的 chunk
       if (maxScore > -Infinity) {
-        selected.push(remaining[maxIndex])
-        remaining.splice(maxIndex, 1)
+        selected.push(remaining[maxIndex]);
+        remaining.splice(maxIndex, 1);
       } else {
         // 如果所有候选都没有 embedding，停止
-        break
+        break;
       }
     }
-    
-    return selected
+
+    return selected;
   } catch (error) {
     // 查询层失败：降级为基础截断
-    console.error('[MMR] 重排序失败，降级为基础截断', error)
-    return chunks.slice(0, topK)
+    console.error("[MMR] 重排序失败，降级为基础截断", error);
+    return chunks.slice(0, topK);
   }
 }
 
 export function deduplicateChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
-  const seen = new Set<string>()
-  return chunks.filter(chunk => {
-    if (seen.has(chunk.id)) return false
-    seen.add(chunk.id)
-    return true
-  })
+  const seen = new Set<string>();
+  return chunks.filter((chunk) => {
+    if (seen.has(chunk.id)) return false;
+    seen.add(chunk.id);
+    return true;
+  });
 }
 
 /**
@@ -370,17 +383,17 @@ export function deduplicateChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
  * 结合向量相似度和全文检索，提高检索质量
  */
 export async function hybridRetrieveChunks(params: {
-  notebookId: string
-  query: string
-  sourceIds?: string[]
-  topK?: number
-  threshold?: number
-  vectorWeight?: number
-  ftsWeight?: number
-  useMMR?: boolean
-  mmrLambda?: number
+  notebookId: string;
+  query: string;
+  sourceIds?: string[];
+  topK?: number;
+  threshold?: number;
+  vectorWeight?: number;
+  ftsWeight?: number;
+  useMMR?: boolean;
+  mmrLambda?: number;
 }): Promise<RetrievalResult> {
-  const startTime = Date.now()
+  const startTime = Date.now();
   const {
     notebookId,
     query,
@@ -391,16 +404,16 @@ export async function hybridRetrieveChunks(params: {
     ftsWeight = RAG_CONFIG.ftsWeight,
     useMMR = true,
     mmrLambda = RAG_CONFIG.mmrLambda,
-  } = params
+  } = params;
 
-  const embeddingStartTime = Date.now()
-  const queryEmbedding = await getEmbedding(query)
-  const embeddingMs = Date.now() - embeddingStartTime
+  const embeddingStartTime = Date.now();
+  const queryEmbedding = await getEmbedding(query);
+  const embeddingMs = Date.now() - embeddingStartTime;
 
-  const retrievalStartTime = Date.now()
-  
-  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK
-  
+  const retrievalStartTime = Date.now();
+
+  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK;
+
   const rawChunks = await vectorStore.hybridSearch({
     notebookId,
     queryEmbedding,
@@ -410,47 +423,48 @@ export async function hybridRetrieveChunks(params: {
     sourceIds,
     vectorWeight,
     ftsWeight,
-  })
+  });
 
-  const retrievalMs = Date.now() - retrievalStartTime
+  const retrievalMs = Date.now() - retrievalStartTime;
 
-  const foundSourceIds = [...new Set(rawChunks.map(c => c.sourceId))]
-  
+  const foundSourceIds = [...new Set(rawChunks.map((c) => c.sourceId))];
+
   const sources = await prisma.source.findMany({
     where: { id: { in: foundSourceIds } },
-    select: { id: true, title: true, type: true }
-  })
-  
-  const sourceMap = new Map(sources.map(s => [s.id, s]))
+    select: { id: true, title: true, type: true },
+  });
 
-  let chunks: RetrievedChunk[] = rawChunks.map(chunk => {
-    const source = sourceMap.get(chunk.sourceId)
+  const sourceMap = new Map(sources.map((s) => [s.id, s]));
+
+  let chunks: RetrievedChunk[] = rawChunks.map((chunk) => {
+    const source = sourceMap.get(chunk.sourceId);
     return {
       id: chunk.id,
       sourceId: chunk.sourceId,
-      sourceTitle: source?.title || '未知来源',
-      sourceType: (source?.type as 'file' | 'url') || 'file',
+      sourceTitle: source?.title || "未知来源",
+      sourceType: (source?.type as "file" | "url") || "file",
       chunkIndex: chunk.chunkIndex,
       content: chunk.content,
-      similarity: chunk.combinedScore,
+      similarity: chunk.similarity, // 使用原始向量相似度，而非 combinedScore，确保置信度计算一致
       metadata: chunk.metadata,
       scores: {
         vectorScore: chunk.vectorScore,
         ftsScore: chunk.ftsScore,
         combinedScore: chunk.combinedScore,
       },
-    }
-  })
-  
+    };
+  });
+
   // 应用 MMR 重排序
   if (useMMR && chunks.length > 1) {
-    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK)
+    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK);
   } else {
-    chunks = chunks.slice(0, topK)
+    chunks = chunks.slice(0, topK);
   }
-  
+
   // 计算置信度
-  const { score: confidence, level: confidenceLevel } = calculateConfidence(chunks)
+  const { score: confidence, level: confidenceLevel } =
+    calculateConfidence(chunks);
 
   return {
     chunks,
@@ -458,8 +472,8 @@ export async function hybridRetrieveChunks(params: {
     retrievalMs,
     embeddingMs,
     queryEmbedding,
-    retrievalType: 'hybrid',
+    retrievalType: "hybrid",
     confidence,
     confidenceLevel,
-  }
+  };
 }
