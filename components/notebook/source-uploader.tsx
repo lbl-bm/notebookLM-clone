@@ -4,17 +4,14 @@
  * 包含搜索框 + 文件上传区域 + URL添加
  */
 
-'use client'
+"use client";
 
-import { useState, useRef } from 'react'
-import { Attachments } from '@ant-design/x'
-import type { GetProp, UploadProps } from 'antd'
-import {
-  Dialog,
-  DialogContent,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { useState, useRef } from "react";
+import { Attachments } from "@ant-design/x";
+import type { GetProp, UploadProps } from "antd";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Upload,
   Link2,
@@ -25,34 +22,34 @@ import {
   Youtube,
   Globe,
   Type,
-} from 'lucide-react'
-import { SourceSearchBox } from './add-source-dialog'
-import { useToast } from '@/hooks/use-toast'
+} from "lucide-react";
+import { SourceSearchBox } from "./add-source-dialog";
+import { useToast } from "@/hooks/use-toast";
 
-type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0]
+type FileType = Parameters<GetProp<UploadProps, "beforeUpload">>[0];
 
 interface AttachmentsRef {
-  nativeElement: HTMLDivElement | null
-  fileNativeElement: HTMLInputElement | null
-  upload: (file: File) => void
-  select: (options: { accept?: string; multiple?: boolean }) => void
+  nativeElement: HTMLDivElement | null;
+  fileNativeElement: HTMLInputElement | null;
+  upload: (file: File) => void;
+  select: (options?: { accept?: string; multiple?: boolean }) => void;
 }
 
 interface UploadingFile {
-  uid: string
-  name: string
-  status: 'uploading' | 'done' | 'error'
-  percent?: number
-  error?: string
+  uid: string;
+  name: string;
+  status: "uploading" | "done" | "error";
+  percent?: number;
+  error?: string;
 }
 
 interface AddSourceModalProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  notebookId: string
-  currentSourceCount?: number
-  maxSourceCount?: number
-  onSuccess?: () => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  notebookId: string;
+  currentSourceCount?: number;
+  maxSourceCount?: number;
+  onSuccess?: () => void;
 }
 
 export function AddSourceModal({
@@ -63,226 +60,258 @@ export function AddSourceModal({
   maxSourceCount = 50,
   onSuccess,
 }: AddSourceModalProps) {
-  const attachmentsRef = useRef<AttachmentsRef>(null)
-  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
-  const [isDragging, setIsDragging] = useState(false)
-  const { toast } = useToast()
-  
+  const attachmentsRef = useRef<AttachmentsRef>(null);
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const { toast } = useToast();
+
   // URL 输入状态
-  const [showUrlInput, setShowUrlInput] = useState(false)
-  const [urlValue, setUrlValue] = useState('')
-  const [urlLoading, setUrlLoading] = useState(false)
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlValue, setUrlValue] = useState("");
+  const [urlLoading, setUrlLoading] = useState(false);
 
   // 文字输入状态
-  const [showTextInput, setShowTextInput] = useState(false)
-  const [textTitle, setTextTitle] = useState('')
-  const [textContent, setTextContent] = useState('')
-  const [textLoading, setTextLoading] = useState(false)
-  const [textCharCount, setTextCharCount] = useState(0)
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [textTitle, setTextTitle] = useState("");
+  const [textContent, setTextContent] = useState("");
+  const [textLoading, setTextLoading] = useState(false);
+  const [textCharCount, setTextCharCount] = useState(0);
 
   const handleUpload = (file: FileType) => {
-    const uid = file.uid || crypto.randomUUID()
-    
-    setUploadingFiles(prev => [...prev, {
-      uid,
-      name: file.name,
-      status: 'uploading',
-      percent: 0,
-    }])
+    const uid = file.uid || crypto.randomUUID();
+
+    setUploadingFiles((prev) => [
+      ...prev,
+      {
+        uid,
+        name: file.name,
+        status: "uploading",
+        percent: 0,
+      },
+    ]);
 
     // 异步执行上传
     const doUpload = async () => {
       try {
-        const formData = new FormData()
-        formData.append('file', file)
-        formData.append('notebookId', notebookId)
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("notebookId", notebookId);
 
-        const response = await fetch('/api/sources/upload', {
-          method: 'POST',
+        const response = await fetch("/api/sources/upload", {
+          method: "POST",
           body: formData,
-        })
+        });
 
         if (!response.ok) {
-          const data = await response.json()
-          throw new Error(data.error || '上传失败')
+          const data = await response.json();
+          throw new Error(data.error || "上传失败");
         }
 
-        setUploadingFiles(prev => prev.map(f => 
-          f.uid === uid ? { ...f, status: 'done', percent: 100 } : f
-        ))
+        setUploadingFiles((prev) =>
+          prev.map((f) =>
+            f.uid === uid ? { ...f, status: "done", percent: 100 } : f,
+          ),
+        );
 
         // 上传成功后自动触发处理队列
-        fetch('/api/cron/process-queue?manual=true').catch(err => {
-          console.error('触发处理队列失败:', err)
-        })
+        fetch("/api/cron/process-queue?manual=true").catch((err) => {
+          console.error("触发处理队列失败:", err);
+        });
 
         setTimeout(() => {
-          setUploadingFiles(prev => prev.filter(f => f.uid !== uid))
-          onSuccess?.()
-        }, 1000)
-
+          setUploadingFiles((prev) => prev.filter((f) => f.uid !== uid));
+          onSuccess?.();
+        }, 1000);
       } catch (error) {
-        setUploadingFiles(prev => prev.map(f => 
-          f.uid === uid ? { ...f, status: 'error', error: (error as Error).message } : f
-        ))
+        setUploadingFiles((prev) =>
+          prev.map((f) =>
+            f.uid === uid
+              ? { ...f, status: "error", error: (error as Error).message }
+              : f,
+          ),
+        );
       }
-    }
+    };
 
-    doUpload()
-    
+    doUpload();
+
     // 返回 false 阻止 Attachments 组件的默认上传行为
-    return false
-  }
+    return false;
+  };
 
   const handleRemoveFile = (uid: string) => {
-    setUploadingFiles(prev => prev.filter(f => f.uid !== uid))
-  }
+    setUploadingFiles((prev) => prev.filter((f) => f.uid !== uid));
+  };
 
   const handleSelectFile = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    e.preventDefault()
+    e.stopPropagation();
+    e.preventDefault();
     attachmentsRef.current?.select({
-      accept: '.pdf',
+      accept: ".pdf",
       multiple: true,
-    })
-  }
+    });
+  };
 
   const handleSearchSuccess = () => {
-    onSuccess?.()
-  }
+    onSuccess?.();
+  };
 
   // 处理添加 URL
   const handleAddUrl = async () => {
-    const url = urlValue.trim()
-    if (!url) return
+    const url = urlValue.trim();
+    if (!url) return;
 
     // 验证 URL 格式
     try {
-      const urlObj = new URL(url)
-      if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-        toast({ title: '格式错误', description: '仅支持 http/https 链接', variant: 'warning' })
-        return
+      const urlObj = new URL(url);
+      if (urlObj.protocol !== "http:" && urlObj.protocol !== "https:") {
+        toast({
+          title: "格式错误",
+          description: "仅支持 http/https 链接",
+          variant: "warning",
+        });
+        return;
       }
     } catch {
-      toast({ title: '格式错误', description: '请输入有效的网址', variant: 'warning' })
-      return
+      toast({
+        title: "格式错误",
+        description: "请输入有效的网址",
+        variant: "warning",
+      });
+      return;
     }
 
-    setUrlLoading(true)
+    setUrlLoading(true);
 
     try {
-      const response = await fetch('/api/sources/url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/sources/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           notebookId,
           url,
         }),
-      })
+      });
 
-      const data = await response.json()
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || '添加失败')
+        throw new Error(data.error || "添加失败");
       }
 
       // 成功后清空并关闭输入框
-      setUrlValue('')
-      setShowUrlInput(false)
-      
+      setUrlValue("");
+      setShowUrlInput(false);
+
       // 添加成功后自动触发处理队列
-      fetch('/api/cron/process-queue?manual=true').catch(err => {
-        console.error('触发处理队列失败:', err)
-      })
+      fetch("/api/cron/process-queue?manual=true").catch((err) => {
+        console.error("触发处理队列失败:", err);
+      });
 
       // 如果有警告，显示一下
       if (data.warning) {
-        toast({ title: '提示', description: data.warning, variant: 'warning' })
+        toast({ title: "提示", description: data.warning, variant: "warning" });
       }
 
-      toast({ title: '已添加来源', description: '网页链接已成功添加', variant: 'success' })
-      onSuccess?.()
+      toast({
+        title: "已添加来源",
+        description: "网页链接已成功添加",
+        variant: "success",
+      });
+      onSuccess?.();
     } catch (err) {
-      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
+      toast({
+        title: "添加失败",
+        description: (err as Error).message,
+        variant: "error",
+      });
     } finally {
-      setUrlLoading(false)
+      setUrlLoading(false);
     }
-  }
+  };
 
   const handleWebsiteClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    e.preventDefault()
-    setShowUrlInput(true)
-    setShowTextInput(false)
-  }
+    e.stopPropagation();
+    e.preventDefault();
+    setShowUrlInput(true);
+    setShowTextInput(false);
+  };
 
   const handleTextClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    e.preventDefault()
-    setShowTextInput(true)
-    setShowUrlInput(false)
-  }
+    e.stopPropagation();
+    e.preventDefault();
+    setShowTextInput(true);
+    setShowUrlInput(false);
+  };
 
   // 处理添加文字
   const handleAddText = async () => {
-    const title = textTitle.trim()
-    const content = textContent.trim()
+    const title = textTitle.trim();
+    const content = textContent.trim();
 
     if (!title) {
-      toast({ title: '请输入标题', variant: 'warning' })
-      return
+      toast({ title: "请输入标题", variant: "warning" });
+      return;
     }
 
     if (content.length < 10) {
-      toast({ title: '文字内容至少需要 10 个字符', variant: 'warning' })
-      return
+      toast({ title: "文字内容至少需要 10 个字符", variant: "warning" });
+      return;
     }
 
     if (content.length > 50000) {
-      toast({ title: '文字内容不能超过 50000 字符', variant: 'warning' })
-      return
+      toast({ title: "文字内容不能超过 50000 字符", variant: "warning" });
+      return;
     }
 
-    setTextLoading(true)
+    setTextLoading(true);
 
     try {
-      const response = await fetch('/api/sources/text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/sources/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           notebookId,
           title,
           content,
         }),
-      })
+      });
 
-      const data = await response.json()
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || '添加失败')
+        throw new Error(data.error || "添加失败");
       }
 
       // 成功后清空并关闭输入框
-      setTextTitle('')
-      setTextContent('')
-      setTextCharCount(0)
-      setShowTextInput(false)
+      setTextTitle("");
+      setTextContent("");
+      setTextCharCount(0);
+      setShowTextInput(false);
 
       // 添加成功后自动触发处理队列
-      fetch('/api/cron/process-queue?manual=true').catch(err => {
-        console.error('触发处理队列失败:', err)
-      })
+      fetch("/api/cron/process-queue?manual=true").catch((err) => {
+        console.error("触发处理队列失败:", err);
+      });
 
-      toast({ title: '已添加来源', description: '文字内容已成功添加', variant: 'success' })
-      onSuccess?.()
+      toast({
+        title: "已添加来源",
+        description: "文字内容已成功添加",
+        variant: "success",
+      });
+      onSuccess?.();
     } catch (err) {
-      toast({ title: '添加失败', description: (err as Error).message, variant: 'error' })
+      toast({
+        title: "添加失败",
+        description: (err as Error).message,
+        variant: "error",
+      });
     } finally {
-      setTextLoading(false)
+      setTextLoading(false);
     }
-  }
+  };
 
-  const progress = Math.round((currentSourceCount / maxSourceCount) * 100)
+  const progress = Math.round((currentSourceCount / maxSourceCount) * 100);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -293,7 +322,7 @@ export function AddSourceModal({
             根据以下内容生成多模态概览展示
           </h2>
         </div>
-        
+
         <div className="space-y-5 px-6 pb-6">
           {/* 搜索框组件 - 居中显示，限制最大宽度 */}
           <div className="flex justify-center">
@@ -314,15 +343,18 @@ export function AddSourceModal({
                 beforeUpload={handleUpload}
                 accept=".pdf"
                 multiple
-                getDropContainer={() => document.getElementById('modal-upload-drop-zone')}
+                getDropContainer={() =>
+                  document.getElementById("modal-upload-drop-zone")
+                }
               >
                 <div
                   id="modal-upload-drop-zone"
                   className={`
                     border-2 border-dashed rounded-xl p-8 text-center transition-all
-                    ${isDragging 
-                      ? 'border-slate-400 bg-slate-100 dark:bg-slate-800' 
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                    ${
+                      isDragging
+                        ? "border-slate-400 bg-slate-100 dark:bg-slate-800"
+                        : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800/50"
                     }
                   `}
                   onDragEnter={() => setIsDragging(true)}
@@ -332,9 +364,12 @@ export function AddSourceModal({
                   <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
                     或将文件拖至此处
                   </p>
-                  
+
                   {/* 来源类型按钮 */}
-                  <div className="flex items-center justify-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                  <div
+                    className="flex items-center justify-center gap-3 flex-wrap"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <Button
                       type="button"
                       variant="outline"
@@ -380,9 +415,9 @@ export function AddSourceModal({
                     placeholder="输入网页链接（http:// 或 https://）"
                     value={urlValue}
                     onChange={(e) => {
-                      setUrlValue(e.target.value)
+                      setUrlValue(e.target.value);
                     }}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddUrl()}
                     className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                     autoFocus
                   />
@@ -395,7 +430,7 @@ export function AddSourceModal({
                     {urlLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      '添加'
+                      "添加"
                     )}
                   </Button>
                   <Button
@@ -404,8 +439,8 @@ export function AddSourceModal({
                     size="icon"
                     className="h-10 w-10"
                     onClick={() => {
-                      setShowUrlInput(false)
-                      setUrlValue('')
+                      setShowUrlInput(false);
+                      setUrlValue("");
                     }}
                   >
                     <X className="h-4 w-4" />
@@ -424,7 +459,7 @@ export function AddSourceModal({
                     placeholder="为这段文字起个标题"
                     value={textTitle}
                     onChange={(e) => {
-                      setTextTitle(e.target.value)
+                      setTextTitle(e.target.value);
                     }}
                     className="flex-1 h-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                     autoFocus
@@ -435,8 +470,8 @@ export function AddSourceModal({
                     placeholder="粘贴你复制的文字内容..."
                     value={textContent}
                     onChange={(e) => {
-                      setTextContent(e.target.value)
-                      setTextCharCount(e.target.value.length)
+                      setTextContent(e.target.value);
+                      setTextCharCount(e.target.value.length);
                     }}
                     className="w-full h-40 p-3 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -450,10 +485,10 @@ export function AddSourceModal({
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      setShowTextInput(false)
-                      setTextTitle('')
-                      setTextContent('')
-                      setTextCharCount(0)
+                      setShowTextInput(false);
+                      setTextTitle("");
+                      setTextContent("");
+                      setTextCharCount(0);
                     }}
                   >
                     取消
@@ -461,7 +496,9 @@ export function AddSourceModal({
                   <Button
                     type="button"
                     onClick={handleAddText}
-                    disabled={!textContent.trim() || textLoading || textCharCount < 10}
+                    disabled={
+                      !textContent.trim() || textLoading || textCharCount < 10
+                    }
                     className="h-9 px-4"
                   >
                     {textLoading ? (
@@ -470,7 +507,7 @@ export function AddSourceModal({
                         添加中...
                       </>
                     ) : (
-                      '添加'
+                      "添加"
                     )}
                   </Button>
                 </div>
@@ -490,11 +527,13 @@ export function AddSourceModal({
                     <FileText className="w-4 h-4 text-red-600 dark:text-red-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate text-slate-900 dark:text-slate-100">{file.name}</p>
-                    {file.status === 'uploading' && (
+                    <p className="text-sm font-medium truncate text-slate-900 dark:text-slate-100">
+                      {file.name}
+                    </p>
+                    {file.status === "uploading" && (
                       <div className="flex items-center gap-2 mt-1">
                         <div className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className="h-full bg-slate-500 transition-all duration-300"
                             style={{ width: `${file.percent || 0}%` }}
                           />
@@ -504,19 +543,19 @@ export function AddSourceModal({
                         </span>
                       </div>
                     )}
-                    {file.status === 'done' && (
+                    {file.status === "done" && (
                       <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
                         <CheckCircle2 className="w-3 h-3" />
                         上传成功
                       </p>
                     )}
-                    {file.status === 'error' && (
+                    {file.status === "error" && (
                       <p className="text-xs text-red-500 mt-1">
-                        {file.error || '上传失败'}
+                        {file.error || "上传失败"}
                       </p>
                     )}
                   </div>
-                  {file.status === 'uploading' ? (
+                  {file.status === "uploading" ? (
                     <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
                   ) : (
                     <Button
@@ -536,7 +575,7 @@ export function AddSourceModal({
           {/* 底部进度条 */}
           <div className="flex items-center gap-3 pt-2">
             <div className="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-blue-500 transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
@@ -548,5 +587,5 @@ export function AddSourceModal({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
