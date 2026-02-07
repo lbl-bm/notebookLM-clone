@@ -56,13 +56,13 @@ import "@ant-design/x-markdown/es/XMarkdown/index.css";
 const RetrievalDetailsPanel = dynamic(
   () =>
     import("./retrieval-details-panel").then(
-      (mod) => mod.RetrievalDetailsPanel,
+      (mod) => mod.RetrievalDetailsPanel
     ),
   {
     loading: () => (
       <div className="p-4 text-sm text-muted-foreground">加载详情中...</div>
     ),
-  },
+  }
 );
 
 interface Message {
@@ -134,7 +134,7 @@ export function ChatPanel({
         });
       }
     },
-    [toast],
+    [toast]
   );
 
   useEffect(() => {
@@ -231,13 +231,21 @@ export function ChatPanel({
           footer,
         };
       }),
-    [messages, isLoading],
+    [messages, isLoading]
   ); // 移除不必要的依赖
 
   // 自动滚动到底部
   useEffect(() => {
     if (messages.length > 0) {
-      listRef.current?.scrollTo({ key: messages[messages.length - 1]?.id });
+      // 延迟滚动，确保 DOM 已更新，避免 installHook.js 报错
+      const timer = setTimeout(() => {
+        try {
+          listRef.current?.scrollTo({ key: messages[messages.length - 1]?.id });
+        } catch (e) {
+          console.warn("Scroll to bottom failed:", e);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [messages]);
 
@@ -308,8 +316,8 @@ export function ChatPanel({
                     answerMode: data.answerMode,
                     retrievalDetails: data.retrievalDetails,
                   }
-                : m,
-            ),
+                : m
+            )
           );
           setCurrentCitations(data.citations || []);
           return;
@@ -337,7 +345,7 @@ export function ChatPanel({
             fullContent += parts[0];
 
             const citationsMatch = text.match(
-              /__CITATIONS__(.+?)__CITATIONS_END__/,
+              /__CITATIONS__(.+?)__CITATIONS_END__/
             );
             if (citationsMatch) {
               try {
@@ -365,8 +373,8 @@ export function ChatPanel({
             prev.map((m) =>
               m.id === aiMessageId
                 ? { ...m, content: fullContent, citations, retrievalDetails }
-                : m,
-            ),
+                : m
+            )
           );
 
           // 更新当前 citations
@@ -380,14 +388,14 @@ export function ChatPanel({
           prev.map((m) =>
             m.id === aiMessageId
               ? { ...m, content: `错误: ${(error as Error).message}` }
-              : m,
-          ),
+              : m
+          )
         );
       } finally {
         setIsLoading(false);
       }
     },
-    [isLoading, messages, notebookId, selectedSourceIds, chatMode],
+    [isLoading, messages, notebookId, selectedSourceIds, chatMode]
   );
 
   // Markdown 渲染器 - 支持内联引用标记
@@ -407,7 +415,7 @@ export function ChatPanel({
         />
       );
     },
-    [selectCitationByIndex],
+    [selectCitationByIndex]
   );
 
   // 角色配置 (rerender-memo)
@@ -472,7 +480,7 @@ export function ChatPanel({
             <div className="group relative pr-6">
               {renderMarkdown(
                 content,
-                msg?.citations as Citation[] | undefined,
+                msg?.citations as Citation[] | undefined
               )}
               <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Popconfirm
@@ -502,7 +510,7 @@ export function ChatPanel({
         },
       },
     }),
-    [messages, renderMarkdown, handleDelete],
+    [messages, renderMarkdown, handleDelete]
   );
 
   return (
@@ -640,7 +648,7 @@ function CitationList({ citations }: { citations: Citation[] }) {
   const { selectCitation } = useCitation();
   // 按相似度排序
   const sortedCitations = [...citations].sort(
-    (a, b) => b.similarity - a.similarity,
+    (a, b) => b.similarity - a.similarity
   );
 
   return (
@@ -743,7 +751,7 @@ function ContentWithCitations({
         );
       },
     }),
-    [citations, onCitationClick],
+    [citations, onCitationClick]
   );
 
   return (
@@ -759,7 +767,7 @@ function ContentWithCitations({
 function processChildren(
   children: React.ReactNode,
   citations: Citation[],
-  onCitationClick: (index: number) => void,
+  onCitationClick: (index: number) => void
 ): React.ReactNode {
   if (typeof children === "string") {
     return processTextWithCitations(children, citations, onCitationClick);
@@ -787,7 +795,7 @@ function processChildren(
 function processTextWithCitations(
   text: string,
   citations: Citation[],
-  onCitationClick: (index: number) => void,
+  onCitationClick: (index: number) => void
 ): React.ReactNode {
   const parts = text.split(/(\[\d+\])/g);
 
