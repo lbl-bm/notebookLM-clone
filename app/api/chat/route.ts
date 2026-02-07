@@ -8,7 +8,7 @@
 import { prisma } from '@/lib/db/prisma'
 import { Prisma } from '@prisma/client'
 import { getCurrentUserId } from '@/lib/db/supabase'
-import { zhipuConfig, getModelConfig, type ModelProvider } from '@/lib/config'
+import { getModelConfig} from '@/lib/config'
 import {
   retrieveChunks,
   hybridRetrieveChunks,

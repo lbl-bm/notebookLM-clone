@@ -8,9 +8,7 @@
 
 import { useState, useCallback } from 'react'
 import {
-  Loader2,
   Search,
-  ArrowRight,
   ChevronUp,
   ChevronDown,
   Check,
