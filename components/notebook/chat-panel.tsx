@@ -87,14 +87,13 @@ export function ChatPanel({
   selectedSourceIds,
 }: ChatPanelProps) {
   const listRef = useRef<{
-    nativeElement: HTMLDivElement; scrollBoxNativeElement: HTMLDivElement;
+    nativeElement: HTMLDivElement;
     scrollBoxNativeElement: HTMLDivElement;
     scrollTo: (options: {
       key?: string | number;
-      top?: number | "bottom" | "top";
-      behavior?: ScrollBehavior;
-      block?: ScrollLogicalPosition;
-   ; offset?: number; align?: 'top' | 'bottom' | 'nearest' }) => void;
+      offset?: number;
+      align?: "top" | "bottom" | "nearest";
+    }) => void;
   } | null>(null);
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
