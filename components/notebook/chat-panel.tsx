@@ -59,7 +59,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: ChatPanelProps) {
-  const listRef = useRef<{ nativeElement: HTMLDivElement; scrollTo: (options: { key?: string | number }) => void } | null>(null)
+  const listRef = useRef<{ nativeElement: HTMLDivElement; scrollBoxNativeElement: HTMLDivElement; scrollTo: (options: { key?: string | number; offset?: number; align?: 'top' | 'bottom' | 'nearest' }) => void } | null>(null)
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -191,7 +191,14 @@ export function ChatPanel({ notebookId, initialMessages, selectedSourceIds }: Ch
   // 自动滚动到底部
   useEffect(() => {
     if (messages.length > 0) {
-      listRef.current?.scrollTo({ key: messages[messages.length - 1]?.id })
+      // 延迟到下一帧，确保 BubbleList 内部滚动容器已挂载
+      requestAnimationFrame(() => {
+        try {
+          listRef.current?.scrollTo({ key: messages[messages.length - 1]?.id })
+        } catch {
+          // BubbleList 内部滚动容器可能尚未就绪，忽略
+        }
+      })
     }
   }, [messages])
 
