@@ -26,7 +26,7 @@ const pool =
     connectionString: process.env.DATABASE_URL,
     max: 1, // serverless 每实例仅需 1 个连接
     idleTimeoutMillis: 20000, // 20s 空闲后释放连接
-    connectionTimeoutMillis: 5000, // 5s 连接超时
+    connectionTimeoutMillis: 10000, // 10s 连接超时（跨区域部署需要更长时间）
   });
 
 const adapter = new PrismaPg(pool);
