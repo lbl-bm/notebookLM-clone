@@ -148,9 +148,12 @@ async function NotebookWithQueue({ notebook }: { notebook: FullNotebook }) {
 export default async function NotebookDetailPage({ params }: PageProps) {
   const { id } = await params;
 
+  // 先解析 cookies 创建 Supabase 客户端（必须在 Promise.all 之前，确保请求上下文正确）
+  const supabase = await createClient();
+
   // 并行获取 auth 和完整 notebook 数据（消除重复查询）
   const [authResult, notebook] = await Promise.all([
-    createClient().then((c) => c.auth.getUser()),
+    supabase.auth.getUser(),
     fetchFullNotebook(id),
   ]);
 
