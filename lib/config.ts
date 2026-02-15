@@ -179,7 +179,41 @@ export const ragStrategyConfig = {
   /** M1: 是否启用引用一致性快检 */
   validationEnabled: process.env.RAG_VALIDATION_ENABLED !== "false", // 默认开启
   /** 当前策略版本标识 */
-  strategyVersion: process.env.RAG_STRATEGY_VERSION || "M1",
+  strategyVersion: process.env.RAG_STRATEGY_VERSION || "M2",
+
+  // ========== M2a 核心特性（默认开启） ==========
+
+  /** M2a: 是否启用候选融合（多路归一化 + 去重 + 来源多样性） */
+  fusionEnabled: process.env.RAG_FUSION_ENABLED !== "false",
+  /** M2a: 是否启用动态 token 预算 */
+  contextBudgetEnabled: process.env.RAG_CONTEXT_BUDGET_ENABLED !== "false",
+  /** M2a: 是否启用动态 topK */
+  dynamicTopKEnabled: process.env.RAG_DYNAMIC_TOPK_ENABLED !== "false",
+  /** M2a: 每个来源最多保留的 chunk 数（来源多样性约束） */
+  maxChunksPerSource: parseInt(
+    process.env.RAG_MAX_CHUNKS_PER_SOURCE || "3",
+  ),
+  /** M2a: 近似重复检测 Jaccard 阈值 */
+  nearDuplicateThreshold: parseFloat(
+    process.env.RAG_NEAR_DUPLICATE_THRESHOLD || "0.8",
+  ),
+  /** M2a: 基础 token 预算 */
+  baseTokenBudget: parseInt(process.env.RAG_BASE_TOKEN_BUDGET || "3000"),
+  /** M2a: 最大 token 预算 */
+  maxTokenBudget: parseInt(process.env.RAG_MAX_TOKEN_BUDGET || "6000"),
+
+  // ========== M2b 可选特性（默认关闭） ==========
+
+  /** M2b: 是否启用查询改写（关键词提取 + 同义扩展） */
+  queryRewriteEnabled: process.env.RAG_QUERY_REWRITE_ENABLED === "true",
+  /** M2b: 是否启用 Stage-2 关键词重排 */
+  stage2RerankEnabled: process.env.RAG_STAGE2_RERANK_ENABLED === "true",
+  /** M2b: Stage-2 重排关键词权重 */
+  stage2RerankWeight: parseFloat(
+    process.env.RAG_STAGE2_RERANK_WEIGHT || "0.15",
+  ),
+  /** M2b: 最大查询扩展数 */
+  maxQueryExpansions: parseInt(process.env.RAG_MAX_QUERY_EXPANSIONS || "2"),
 };
 
 // 应用配置

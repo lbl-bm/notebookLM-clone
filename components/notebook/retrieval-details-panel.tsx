@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Info,
+  Layers,
 } from "lucide-react";
 
 interface RetrievalDetailsPanelProps {
@@ -71,6 +72,15 @@ interface RetrievalDetailsPanelProps {
         coverage: number;
       };
     };
+    // M2: 管线诊断
+    m2Diagnostics?: {
+      dynamicTopK?: { baseTopK: number; complexityAdjust: number; typeAdjust: number; finalTopK: number };
+      fusion?: { routeCounts: Record<string, number>; totalBeforeDedup: number; nearDuplicatesRemoved: number; diversityTruncated: number; totalAfterFusion: number };
+      budget?: { totalBudget: number; usedTokens: number; selectedChunks: number; truncatedChunks: number; complexity: string };
+      queryRewrite?: { originalQuery: string; keywords: string[]; expansions: string[]; durationMs: number };
+      rerank?: { inputCount: number; outputCount: number; keywordWeight: number; scoreChanges: { maxDelta: number; avgDelta: number }; durationMs: number };
+      stageTiming?: Record<string, number>;
+    } | null;
   };
 }
 
@@ -106,6 +116,7 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
     ? confidenceLevelConfig[confidenceLevel]
     : null;
   const ConfidenceIcon = confidenceConfig?.icon || Shield;
+  const m2 = details.m2Diagnostics;
 
   return (
     <div className="flex flex-col h-full">
@@ -214,6 +225,15 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
                 诊断
               </TabsTrigger>
             )}
+            {m2 && (
+              <TabsTrigger
+                value="m2pipeline"
+                className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 h-10 text-xs"
+              >
+                <Layers className="w-3.5 h-3.5 mr-1.5" />
+                M2 管线
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -261,6 +281,7 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
               timing={details.timing}
               model={details.model || "GLM-4.7"}
               chunkCount={details.chunks.length}
+              m2Diagnostics={m2}
             />
           </ScrollArea>
         </TabsContent>
@@ -344,6 +365,188 @@ export function RetrievalDetailsPanel({ details }: RetrievalDetailsPanelProps) {
                           {details.evidenceStats.aboveThreshold}
                         </span>
                       </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+        )}
+
+        {/* M2: 管线诊断 Tab */}
+        {m2 && (
+          <TabsContent value="m2pipeline" className="flex-1 m-0 p-0 min-h-0">
+            <ScrollArea className="h-full p-4">
+              <div className="space-y-4">
+                {/* 动态 TopK */}
+                {m2.dynamicTopK && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      动态 TopK
+                    </span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-blue-50 dark:bg-blue-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">基础 TopK</span>
+                        <span className="font-bold">{m2.dynamicTopK.baseTopK}</span>
+                      </div>
+                      <div className="bg-blue-50 dark:bg-blue-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">最终 TopK</span>
+                        <span className="font-bold">{m2.dynamicTopK.finalTopK}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">复杂度调整</span>
+                        <span className="font-bold">{m2.dynamicTopK.complexityAdjust >= 0 ? "+" : ""}{m2.dynamicTopK.complexityAdjust}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">类型调整</span>
+                        <span className="font-bold">{m2.dynamicTopK.typeAdjust >= 0 ? "+" : ""}{m2.dynamicTopK.typeAdjust}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 查询改写 (M2b) */}
+                {m2.queryRewrite && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      查询改写 ({m2.queryRewrite.durationMs}ms)
+                    </span>
+                    {m2.queryRewrite.keywords.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {m2.queryRewrite.keywords.map((kw, i) => (
+                          <span key={i} className="text-[10px] px-1.5 py-0.5 bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 rounded">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {m2.queryRewrite.expansions.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-muted-foreground">扩展查询：</span>
+                        {m2.queryRewrite.expansions.map((exp, i) => (
+                          <p key={i} className="text-[10px] font-mono bg-muted p-1.5 rounded">
+                            {exp}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 候选融合 */}
+                {m2.fusion && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      候选融合
+                    </span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-orange-50 dark:bg-orange-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">融合前总数</span>
+                        <span className="font-bold">{m2.fusion.totalBeforeDedup}</span>
+                      </div>
+                      <div className="bg-orange-50 dark:bg-orange-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">融合后总数</span>
+                        <span className="font-bold">{m2.fusion.totalAfterFusion}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">近似重复移除</span>
+                        <span className="font-bold">{m2.fusion.nearDuplicatesRemoved}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">多样性截断</span>
+                        <span className="font-bold">{m2.fusion.diversityTruncated}</span>
+                      </div>
+                    </div>
+                    {m2.fusion.routeCounts && (
+                      <div className="flex gap-2 text-[10px]">
+                        {Object.entries(m2.fusion.routeCounts).map(([route, count]) => (
+                          <span key={route} className="px-1.5 py-0.5 bg-muted rounded">
+                            {route}: {count}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Stage-2 重排 (M2b) */}
+                {m2.rerank && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      Stage-2 重排 ({m2.rerank.durationMs}ms)
+                    </span>
+                    <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">输入</span>
+                        <span className="font-bold">{m2.rerank.inputCount}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">输出</span>
+                        <span className="font-bold">{m2.rerank.outputCount}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">关键词权重</span>
+                        <span className="font-bold">{m2.rerank.keywordWeight}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Context Budget */}
+                {m2.budget && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      Context Budget
+                    </span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-green-50 dark:bg-green-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">预算</span>
+                        <span className="font-bold">{m2.budget.totalBudget} tokens</span>
+                      </div>
+                      <div className="bg-green-50 dark:bg-green-950/30 rounded p-2">
+                        <span className="text-muted-foreground block">已用</span>
+                        <span className="font-bold">{m2.budget.usedTokens} tokens</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">选中片段</span>
+                        <span className="font-bold">{m2.budget.selectedChunks}</span>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <span className="text-muted-foreground block">截断片段</span>
+                        <span className="font-bold">{m2.budget.truncatedChunks}</span>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      复杂度: <span className="font-medium">{m2.budget.complexity}</span>
+                    </div>
+                    {/* Budget 使用率进度条 */}
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          m2.budget.usedTokens / m2.budget.totalBudget > 0.9
+                            ? "bg-red-400"
+                            : m2.budget.usedTokens / m2.budget.totalBudget > 0.7
+                              ? "bg-yellow-500"
+                              : "bg-green-500"
+                        }`}
+                        style={{ width: `${Math.min(100, (m2.budget.usedTokens / m2.budget.totalBudget) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 阶段耗时 */}
+                {m2.stageTiming && Object.keys(m2.stageTiming).length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      M2 阶段耗时
+                    </span>
+                    <div className="flex flex-wrap gap-2 text-[10px]">
+                      {Object.entries(m2.stageTiming).map(([stage, ms]) => (
+                        <span key={stage} className="px-2 py-1 bg-muted rounded font-mono">
+                          {stage}: <span className="font-bold">{ms}ms</span>
+                        </span>
+                      ))}
                     </div>
                   </div>
                 )}

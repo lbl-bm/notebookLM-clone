@@ -3,6 +3,20 @@ import { prisma } from "@/lib/db/prisma";
 import { Prisma } from "@prisma/client";
 import { vectorStore, type ChunkMetadata } from "@/lib/db/vector-store";
 import { EMBEDDING_DIM, ragStrategyConfig } from "@/lib/config";
+import { classifyQuestion, QuestionType } from "./prompt";
+import {
+  classifyComplexity,
+  calculateBudget,
+  allocateBudget,
+} from "./context-budget";
+import { calculateDynamicTopK } from "./dynamic-topk";
+import { fuseCandidates } from "./fusion";
+import { rewriteQuery } from "./query-rewriter";
+import { stage2Rerank } from "./reranker";
+import type {
+  FusionCandidate,
+  M2PipelineDiagnostics,
+} from "./types";
 
 export const RAG_CONFIG = {
   topK: 8,
@@ -94,6 +108,8 @@ export interface RetrievalResult {
   retrievalDecision?: RetrievalDecision;
   /** M1: 证据统计 */
   evidenceStats?: EvidenceStats;
+  /** M2: 管线诊断 */
+  m2Diagnostics?: M2PipelineDiagnostics;
 }
 
 export async function retrieveChunks(params: {
@@ -172,9 +188,11 @@ export async function retrieveChunks(params: {
 
   // M1: 计算证据统计 & 检索决策
   const evidenceStats = computeEvidenceStats(chunks);
+  const questionType = classifyQuestion(query);
   const retrievalDecision = determineRetrievalDecision(
     chunks,
     confidenceDetail,
+    questionType,
   );
 
   return {
@@ -291,13 +309,24 @@ export function calculateConfidence(
 
 /**
  * M1: 确定检索决策
+ * M2-fix: 感知问题类型 — 总结/通用类问题天然相似度低，有 chunk 时降级为 uncertain 而非拒答
  */
 export function determineRetrievalDecision(
   chunks: RetrievedChunk[],
   confidenceResult: ConfidenceResult,
+  questionType?: QuestionType,
 ): RetrievalDecision {
-  if (chunks.length === 0 || confidenceResult.level === "low") {
+  if (chunks.length === 0) {
     return "no_evidence";
+  }
+
+  // 总结/通用类问题天然语义相似度低，有 chunk 时不应直接拒答
+  const isBroadQuery =
+    questionType === QuestionType.SUMMARY ||
+    questionType === QuestionType.GENERAL;
+
+  if (confidenceResult.level === "low") {
+    return isBroadQuery ? "uncertain" : "no_evidence";
   }
   if (confidenceResult.level === "medium") {
     return "uncertain";
@@ -494,6 +523,7 @@ export function deduplicateChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
 /**
  * 混合检索
  * 结合向量相似度和全文检索，提高检索质量
+ * M2: 集成编排器 — 动态 topK / 融合 / 预算 / 查询改写 / 重排
  */
 export async function hybridRetrieveChunks(params: {
   notebookId: string;
@@ -519,13 +549,59 @@ export async function hybridRetrieveChunks(params: {
     mmrLambda = RAG_CONFIG.mmrLambda,
   } = params;
 
+  // M1 回退：策略版本为 M1 时跳过所有 M2 逻辑
+  const isM2 = ragStrategyConfig.strategyVersion !== "M1";
+
   const embeddingStartTime = Date.now();
   const queryEmbedding = await getEmbedding(query);
   const embeddingMs = Date.now() - embeddingStartTime;
 
-  const retrievalStartTime = Date.now();
+  // ========== M2: 查询分析 ==========
+  const m2Diagnostics: M2PipelineDiagnostics = {};
+  const stageTiming: Record<string, number> = {};
 
-  const retrievalTopK = useMMR ? Math.min(topK * 3, 20) : topK;
+  let effectiveTopK = topK;
+  let keywords: string[] = [];
+  let expansions: string[] = [];
+
+  if (isM2) {
+    // 1. 问题分类 & 复杂度
+    const questionType = classifyQuestion(query);
+    const complexity = classifyComplexity(query, questionType);
+
+    // 2. 动态 topK
+    if (ragStrategyConfig.dynamicTopKEnabled) {
+      const topKStart = Date.now();
+      const { topK: dynamicK, diagnostics: topKDiag } = calculateDynamicTopK({
+        complexity,
+        questionType,
+        baseTopK: topK,
+      });
+      effectiveTopK = dynamicK;
+      m2Diagnostics.dynamicTopK = topKDiag;
+      stageTiming.dynamicTopK = Date.now() - topKStart;
+    }
+
+    // 3. M2b: 查询改写
+    if (ragStrategyConfig.queryRewriteEnabled) {
+      const rewriteStart = Date.now();
+      try {
+        const rewriteResult = rewriteQuery(query);
+        keywords = rewriteResult.keywords;
+        expansions = rewriteResult.expansions;
+        m2Diagnostics.queryRewrite = rewriteResult.diagnostics;
+      } catch (e) {
+        console.warn("[M2] 查询改写失败，降级跳过", e);
+      }
+      stageTiming.queryRewrite = Date.now() - rewriteStart;
+    }
+  }
+
+  // ========== 主路由检索 ==========
+  const retrievalStartTime = Date.now();
+  const retrievalTopK = useMMR
+    ? Math.min(effectiveTopK * 3, 24)
+    : effectiveTopK;
 
   const rawChunks = await vectorStore.hybridSearch({
     notebookId,
@@ -538,9 +614,38 @@ export async function hybridRetrieveChunks(params: {
     ftsWeight,
   });
 
+  // ========== M2b: 扩展路由检索 ==========
+  let expansionChunks: typeof rawChunks = [];
+  if (isM2 && ragStrategyConfig.queryRewriteEnabled && expansions.length > 0) {
+    const expansionStart = Date.now();
+    try {
+      // 每个扩展查询复用原始 embedding，只改 FTS 文本
+      for (const expansion of expansions) {
+        const expResult = await vectorStore.hybridSearch({
+          notebookId,
+          queryEmbedding, // 复用同一个 embedding
+          queryText: expansion,
+          topK: Math.min(effectiveTopK, 8),
+          threshold,
+          sourceIds,
+          vectorWeight,
+          ftsWeight,
+        });
+        expansionChunks.push(...expResult);
+      }
+    } catch (e) {
+      console.warn("[M2] 扩展路由检索失败，降级跳过", e);
+    }
+    stageTiming.expansionRetrieval = Date.now() - expansionStart;
+  }
+
   const retrievalMs = Date.now() - retrievalStartTime;
 
-  const foundSourceIds = [...new Set(rawChunks.map((c) => c.sourceId))];
+  // ========== 来源信息查询 ==========
+  const allRawChunks = [...rawChunks, ...expansionChunks];
+  const foundSourceIds = [
+    ...new Set(allRawChunks.map((c) => c.sourceId)),
+  ];
 
   const sources = await prisma.source.findMany({
     where: { id: { in: foundSourceIds } },
@@ -549,41 +654,159 @@ export async function hybridRetrieveChunks(params: {
 
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
 
-  let chunks: RetrievedChunk[] = rawChunks.map((chunk) => {
-    const source = sourceMap.get(chunk.sourceId);
-    return {
-      id: chunk.id,
-      sourceId: chunk.sourceId,
-      sourceTitle: source?.title || "未知来源",
-      sourceType: (source?.type as "file" | "url") || "file",
-      chunkIndex: chunk.chunkIndex,
-      content: chunk.content,
-      similarity: chunk.similarity, // 使用原始向量相似度，而非 combinedScore，确保置信度计算一致
-      metadata: chunk.metadata,
-      scores: {
-        vectorScore: chunk.vectorScore,
-        ftsScore: chunk.ftsScore,
-        combinedScore: chunk.combinedScore,
-      },
-    };
-  });
+  // ========== M2: 候选融合 ==========
+  let chunks: RetrievedChunk[];
 
-  // 应用 MMR 重排序
-  if (useMMR && chunks.length > 1) {
-    chunks = await rerankeWithMMR(chunks, queryEmbedding, mmrLambda, topK);
+  if (
+    isM2 &&
+    ragStrategyConfig.fusionEnabled &&
+    expansionChunks.length > 0
+  ) {
+    const fusionStart = Date.now();
+
+    // 构建主路由候选
+    const primaryCandidates: FusionCandidate[] = rawChunks.map((c) => ({
+      id: c.id,
+      sourceId: c.sourceId,
+      chunkIndex: c.chunkIndex,
+      content: c.content,
+      metadata: c.metadata,
+      rawScore: c.combinedScore,
+      normalizedScore: 0,
+      route: "primary" as const,
+      vectorScore: c.vectorScore,
+      ftsScore: c.ftsScore,
+    }));
+
+    // 构建扩展路由候选
+    const expansionCandidates: FusionCandidate[] = expansionChunks.map(
+      (c) => ({
+        id: c.id,
+        sourceId: c.sourceId,
+        chunkIndex: c.chunkIndex,
+        content: c.content,
+        metadata: c.metadata,
+        rawScore: c.combinedScore,
+        normalizedScore: 0,
+        route: "expansion" as const,
+        vectorScore: c.vectorScore,
+        ftsScore: c.ftsScore,
+      }),
+    );
+
+    const fusionResult = fuseCandidates([
+      { candidates: primaryCandidates, routeLabel: "primary" },
+      { candidates: expansionCandidates, routeLabel: "expansion" },
+    ]);
+
+    m2Diagnostics.fusion = fusionResult.diagnostics;
+    stageTiming.fusion = Date.now() - fusionStart;
+
+    // 融合后转为 RetrievedChunk
+    chunks = fusionResult.candidates.map((c) => {
+      const source = sourceMap.get(c.sourceId);
+      return {
+        id: c.id,
+        sourceId: c.sourceId,
+        sourceTitle: source?.title || "未知来源",
+        sourceType: (source?.type as "file" | "url") || "file",
+        chunkIndex: c.chunkIndex,
+        content: c.content,
+        similarity: c.normalizedScore,
+        metadata: c.metadata,
+        scores: {
+          vectorScore: c.vectorScore,
+          ftsScore: c.ftsScore,
+          combinedScore: c.rawScore,
+        },
+      };
+    });
   } else {
-    chunks = chunks.slice(0, topK);
+    // 无融合：直接映射主路由结果
+    chunks = rawChunks.map((chunk) => {
+      const source = sourceMap.get(chunk.sourceId);
+      return {
+        id: chunk.id,
+        sourceId: chunk.sourceId,
+        sourceTitle: source?.title || "未知来源",
+        sourceType: (source?.type as "file" | "url") || "file",
+        chunkIndex: chunk.chunkIndex,
+        content: chunk.content,
+        similarity: chunk.similarity,
+        metadata: chunk.metadata,
+        scores: {
+          vectorScore: chunk.vectorScore,
+          ftsScore: chunk.ftsScore,
+          combinedScore: chunk.combinedScore,
+        },
+      };
+    });
   }
 
-  // 计算置信度
+  // ========== MMR (Stage-1) ==========
+  if (useMMR && chunks.length > 1) {
+    chunks = await rerankeWithMMR(
+      chunks,
+      queryEmbedding,
+      mmrLambda,
+      effectiveTopK,
+    );
+  } else {
+    chunks = chunks.slice(0, effectiveTopK);
+  }
+
+  // ========== M2b: Stage-2 关键词重排 ==========
+  if (
+    isM2 &&
+    ragStrategyConfig.stage2RerankEnabled &&
+    keywords.length > 0
+  ) {
+    const rerankStart = Date.now();
+    try {
+      const { result: reranked, diagnostics: rerankDiag } =
+        stage2Rerank(chunks, keywords);
+      chunks = reranked;
+      m2Diagnostics.rerank = rerankDiag;
+    } catch (e) {
+      console.warn("[M2] Stage-2 重排失败，降级跳过", e);
+    }
+    stageTiming.stage2Rerank = Date.now() - rerankStart;
+  }
+
+  // ========== M2a: Context Budget ==========
+  if (isM2 && ragStrategyConfig.contextBudgetEnabled) {
+    const budgetStart = Date.now();
+    try {
+      const questionType = classifyQuestion(query);
+      const complexity = classifyComplexity(query, questionType);
+      const totalBudget = calculateBudget(complexity);
+      const { selectedIndices, diagnostics: budgetDiag } = allocateBudget(
+        chunks,
+        totalBudget,
+        complexity,
+      );
+      chunks = selectedIndices.map((i) => chunks[i]);
+      m2Diagnostics.budget = budgetDiag;
+    } catch (e) {
+      console.warn("[M2] Context Budget 应用失败，降级跳过", e);
+    }
+    stageTiming.contextBudget = Date.now() - budgetStart;
+  }
+
+  if (Object.keys(stageTiming).length > 0) {
+    m2Diagnostics.stageTiming = stageTiming;
+  }
+
+  // ========== 置信度 & 决策（感知问题类型） ==========
   const confidenceDetail = calculateConfidence(chunks);
   const { score: confidence, level: confidenceLevel } = confidenceDetail;
 
-  // M1: 计算证据统计 & 检索决策
   const evidenceStats = computeEvidenceStats(chunks);
+  const finalQuestionType = classifyQuestion(query);
   const retrievalDecision = determineRetrievalDecision(
     chunks,
     confidenceDetail,
+    finalQuestionType,
   );
 
   return {
@@ -598,5 +821,7 @@ export async function hybridRetrieveChunks(params: {
     confidenceDetail,
     retrievalDecision,
     evidenceStats,
+    m2Diagnostics:
+      Object.keys(m2Diagnostics).length > 0 ? m2Diagnostics : undefined,
   };
 }

@@ -83,6 +83,15 @@ export interface ChatTraceLog {
   };
   /** 生成模型 */
   model: string;
+  /** M2: 管线诊断 */
+  m2Diagnostics?: {
+    dynamicTopK?: { baseTopK: number; finalTopK: number };
+    fusion?: { totalBeforeDedup: number; totalAfterFusion: number };
+    budget?: { totalBudget: number; usedTokens: number; selectedChunks: number };
+    queryRewrite?: { keywords: string[]; expansions: string[] };
+    rerank?: { inputCount: number; outputCount: number };
+    stageTiming?: Record<string, number>;
+  };
 }
 
 class Logger {
@@ -169,6 +178,7 @@ class Logger {
       timing: log.timing,
       model: log.model,
       strategy: log.strategyVersion,
+      m2: log.m2Diagnostics,
     });
   }
 }

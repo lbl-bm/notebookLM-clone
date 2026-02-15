@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     const evidenceStats = retrievalResult.evidenceStats;
     const confidenceDetail = retrievalResult.confidenceDetail;
 
-    // 构造检索详情（包含 M1 诊断信息）
+    // 构造检索详情（包含 M1 + M2 诊断信息）
     const retrievalDetails = {
       query: userQuestion,
       retrievalParams: {
@@ -139,6 +139,8 @@ export async function POST(request: Request) {
         embedding: retrievalResult.embeddingMs,
         retrieval: retrievalResult.retrievalMs,
       },
+      // M2: 管线诊断
+      m2Diagnostics: retrievalResult.m2Diagnostics || null,
     };
 
     // 2. 判断是否有依据 (无 chunks 或 低置信度)
@@ -171,6 +173,7 @@ export async function POST(request: Request) {
           total: Date.now() - startTime,
         },
         model: "none",
+        m2Diagnostics: retrievalResult.m2Diagnostics as ChatTraceLog["m2Diagnostics"],
       };
       logger.chatTrace(chatTrace);
 
@@ -357,6 +360,7 @@ export async function POST(request: Request) {
                   total: Date.now() - startTime,
                 },
                 model: modelConfig.model,
+                m2Diagnostics: retrievalResult.m2Diagnostics as ChatTraceLog["m2Diagnostics"],
               };
               logger.chatTrace(chatTrace);
 

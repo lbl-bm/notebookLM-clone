@@ -34,3 +34,37 @@ export {
   validateCitationConsistency,
   type ValidationResult,
 } from "./validator";
+
+// M2 模块导出
+export {
+  estimateTokenCount,
+  classifyComplexity,
+  calculateBudget,
+  allocateBudget,
+} from "./context-budget";
+
+export { calculateDynamicTopK } from "./dynamic-topk";
+
+export {
+  normalizeRouteScores,
+  removeNearDuplicates,
+  applySourceDiversityConstraint,
+  fuseCandidates,
+} from "./fusion";
+
+export { extractKeywords, generateExpansions, rewriteQuery } from "./query-rewriter";
+
+export { stage2Rerank } from "./reranker";
+
+export type {
+  QuestionComplexity,
+  QueryAnalysis,
+  FusionCandidate,
+  FusionResult,
+  FusionDiagnostics,
+  DynamicTopKDiagnostics,
+  BudgetDiagnostics,
+  QueryRewriteDiagnostics,
+  RerankDiagnostics,
+  M2PipelineDiagnostics,
+} from "./types";
