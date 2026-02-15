@@ -56,13 +56,13 @@ import "@ant-design/x-markdown/es/XMarkdown/index.css";
 const RetrievalDetailsPanel = dynamic(
   () =>
     import("./retrieval-details-panel").then(
-      (mod) => mod.RetrievalDetailsPanel
+      (mod) => mod.RetrievalDetailsPanel,
     ),
   {
     loading: () => (
       <div className="p-4 text-sm text-muted-foreground">加载详情中...</div>
     ),
-  }
+  },
 );
 
 interface Message {
@@ -134,7 +134,7 @@ export function ChatPanel({
         });
       }
     },
-    [toast]
+    [toast],
   );
 
   useEffect(() => {
@@ -181,9 +181,12 @@ export function ChatPanel({
       messages.map((msg) => {
         // 判断是否为无依据回复
         const isNoEvidence = msg.answerMode === "no_evidence";
+        const isUncertain = msg.answerMode === "grounded_uncertain";
         const citations = msg.citations as Citation[] | undefined;
         const hasCitations = citations && citations.length > 0;
         const retrievalDetails = msg.retrievalDetails;
+        const validationQuality = retrievalDetails?.validationResult
+          ?.qualityLabel as string | undefined;
 
         let footer: React.ReactNode = undefined;
         if (msg.role === "assistant") {
@@ -191,6 +194,8 @@ export function ChatPanel({
             <div className="space-y-2">
               {hasCitations && <CitationList citations={citations} />}
               {isNoEvidence && <NoEvidenceHint />}
+              {isUncertain && <UncertainEvidenceHint />}
+              {validationQuality === "partial" && <ValidationWarning />}
               {retrievalDetails && (
                 <div className="flex justify-end">
                   <Sheet>
@@ -231,7 +236,7 @@ export function ChatPanel({
           footer,
         };
       }),
-    [messages, isLoading]
+    [messages, isLoading],
   ); // 移除不必要的依赖
 
   // 自动滚动到底部
@@ -316,8 +321,8 @@ export function ChatPanel({
                     answerMode: data.answerMode,
                     retrievalDetails: data.retrievalDetails,
                   }
-                : m
-            )
+                : m,
+            ),
           );
           setCurrentCitations(data.citations || []);
           return;
@@ -331,6 +336,7 @@ export function ChatPanel({
         let fullContent = "";
         let citations: Citation[] = [];
         let retrievalDetails: any = null;
+        let answerMode: string | null = null;
         let isLongCat = response.url.includes("longcat");
 
         while (true) {
@@ -345,13 +351,19 @@ export function ChatPanel({
             fullContent += parts[0];
 
             const citationsMatch = text.match(
-              /__CITATIONS__(.+?)__CITATIONS_END__/
+              /__CITATIONS__(.+?)__CITATIONS_END__/,
             );
             if (citationsMatch) {
               try {
                 const citationsData = JSON.parse(citationsMatch[1]);
                 citations = citationsData.citations || [];
                 retrievalDetails = citationsData.retrievalDetails || null;
+                answerMode = citationsData.answerMode || null;
+                // M1: 将 validationResult 合并到 retrievalDetails 以便诊断面板展示
+                if (retrievalDetails && citationsData.validationResult) {
+                  retrievalDetails.validationResult =
+                    citationsData.validationResult;
+                }
               } catch (e) {
                 console.error("解析 citations 失败:", e);
               }
@@ -372,9 +384,15 @@ export function ChatPanel({
           setMessages((prev) =>
             prev.map((m) =>
               m.id === aiMessageId
-                ? { ...m, content: fullContent, citations, retrievalDetails }
-                : m
-            )
+                ? {
+                    ...m,
+                    content: fullContent,
+                    citations,
+                    retrievalDetails,
+                    answerMode,
+                  }
+                : m,
+            ),
           );
 
           // 更新当前 citations
@@ -388,14 +406,14 @@ export function ChatPanel({
           prev.map((m) =>
             m.id === aiMessageId
               ? { ...m, content: `错误: ${(error as Error).message}` }
-              : m
-          )
+              : m,
+          ),
         );
       } finally {
         setIsLoading(false);
       }
     },
-    [isLoading, messages, notebookId, selectedSourceIds, chatMode]
+    [isLoading, messages, notebookId, selectedSourceIds, chatMode],
   );
 
   // Markdown 渲染器 - 支持内联引用标记
@@ -415,7 +433,7 @@ export function ChatPanel({
         />
       );
     },
-    [selectCitationByIndex]
+    [selectCitationByIndex],
   );
 
   // 角色配置 (rerender-memo)
@@ -480,7 +498,7 @@ export function ChatPanel({
             <div className="group relative pr-6">
               {renderMarkdown(
                 content,
-                msg?.citations as Citation[] | undefined
+                msg?.citations as Citation[] | undefined,
               )}
               <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Popconfirm
@@ -510,7 +528,7 @@ export function ChatPanel({
         },
       },
     }),
-    [messages, renderMarkdown, handleDelete]
+    [messages, renderMarkdown, handleDelete],
   );
 
   return (
@@ -648,7 +666,7 @@ function CitationList({ citations }: { citations: Citation[] }) {
   const { selectCitation } = useCitation();
   // 按相似度排序
   const sortedCitations = [...citations].sort(
-    (a, b) => b.similarity - a.similarity
+    (a, b) => b.similarity - a.similarity,
   );
 
   return (
@@ -751,7 +769,7 @@ function ContentWithCitations({
         );
       },
     }),
-    [citations, onCitationClick]
+    [citations, onCitationClick],
   );
 
   return (
@@ -767,7 +785,7 @@ function ContentWithCitations({
 function processChildren(
   children: React.ReactNode,
   citations: Citation[],
-  onCitationClick: (index: number) => void
+  onCitationClick: (index: number) => void,
 ): React.ReactNode {
   if (typeof children === "string") {
     return processTextWithCitations(children, citations, onCitationClick);
@@ -795,7 +813,7 @@ function processChildren(
 function processTextWithCitations(
   text: string,
   citations: Citation[],
-  onCitationClick: (index: number) => void
+  onCitationClick: (index: number) => void,
 ): React.ReactNode {
   const parts = text.split(/(\[\d+\])/g);
 
@@ -866,6 +884,35 @@ function NoEvidenceHint() {
         <p className="font-medium text-amber-600">未找到相关依据</p>
         <p className="mt-1">建议上传更多资料或缩小问题范围</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * M1: 证据不确定提示
+ */
+function UncertainEvidenceHint() {
+  return (
+    <div className="flex items-start gap-2 mt-3 pt-3 border-t border-slate-200">
+      <AlertCircle className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+      <div className="text-xs text-slate-500">
+        <p className="font-medium text-yellow-600">证据置信度中等</p>
+        <p className="mt-1">回答基于有限证据生成，建议结合其他来源交叉验证</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * M1: 引用一致性校验警告
+ */
+function ValidationWarning() {
+  return (
+    <div className="flex items-start gap-2 mt-2 pt-2 border-t border-slate-100">
+      <AlertCircle className="h-3.5 w-3.5 text-orange-400 flex-shrink-0 mt-0.5" />
+      <p className="text-[11px] text-orange-500">
+        部分引用未通过一致性检查，请注意核实引用内容
+      </p>
     </div>
   );
 }

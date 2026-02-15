@@ -2,7 +2,7 @@ import { getEmbedding } from "@/lib/ai/zhipu";
 import { prisma } from "@/lib/db/prisma";
 import { Prisma } from "@prisma/client";
 import { vectorStore, type ChunkMetadata } from "@/lib/db/vector-store";
-import { EMBEDDING_DIM } from "@/lib/config";
+import { EMBEDDING_DIM, ragStrategyConfig } from "@/lib/config";
 
 export const RAG_CONFIG = {
   topK: 8,
@@ -43,6 +43,42 @@ export interface RetrievedChunk {
   scores?: RetrievalScores;
 }
 
+/**
+ * M1: 检索决策类型
+ */
+export type RetrievalDecision = "grounded" | "uncertain" | "no_evidence";
+
+/**
+ * M1: 证据统计
+ */
+export interface EvidenceStats {
+  totalChunks: number;
+  uniqueSources: number;
+  avgSimilarity: number;
+  maxSimilarity: number;
+  aboveThreshold: number;
+  /** 来源覆盖率：uniqueSources / totalSources (0-1) */
+  coverage: number;
+  /** 最高分与最低分的差 */
+  scoreGap: number;
+}
+
+/**
+ * M1: 多维度置信度
+ */
+export interface ConfidenceResult {
+  score: number;
+  level: "low" | "medium" | "high";
+  components: {
+    /** 基于相似度的分数 */
+    similarity: number;
+    /** 基于来源多样性的分数 */
+    diversity: number;
+    /** 基于证据覆盖的分数 */
+    coverage: number;
+  };
+}
+
 export interface RetrievalResult {
   chunks: RetrievedChunk[];
   hasEvidence: boolean;
@@ -50,8 +86,14 @@ export interface RetrievalResult {
   embeddingMs: number;
   queryEmbedding: number[];
   retrievalType?: RetrievalType;
-  confidence?: number; // 置信度分数 (0-1)
-  confidenceLevel?: "low" | "medium" | "high"; // 置信度等级
+  confidence?: number;
+  confidenceLevel?: "low" | "medium" | "high";
+  /** M1: 多维度置信度 */
+  confidenceDetail?: ConfidenceResult;
+  /** M1: 检索决策 */
+  retrievalDecision?: RetrievalDecision;
+  /** M1: 证据统计 */
+  evidenceStats?: EvidenceStats;
 }
 
 export async function retrieveChunks(params: {
@@ -125,8 +167,15 @@ export async function retrieveChunks(params: {
   }
 
   // 计算置信度
-  const { score: confidence, level: confidenceLevel } =
-    calculateConfidence(chunks);
+  const confidenceDetail = calculateConfidence(chunks);
+  const { score: confidence, level: confidenceLevel } = confidenceDetail;
+
+  // M1: 计算证据统计 & 检索决策
+  const evidenceStats = computeEvidenceStats(chunks);
+  const retrievalDecision = determineRetrievalDecision(
+    chunks,
+    confidenceDetail,
+  );
 
   return {
     chunks,
@@ -136,60 +185,124 @@ export async function retrieveChunks(params: {
     queryEmbedding,
     confidence,
     confidenceLevel,
+    confidenceDetail,
+    retrievalDecision,
+    evidenceStats,
   };
 }
 
 /**
- * 计算置信度分数
- * 基于检索结果的相似度分布判断回答质量
+ * M1: 计算证据统计信息
  */
-export function calculateConfidence(chunks: RetrievedChunk[]): {
-  score: number;
-  level: "low" | "medium" | "high";
-} {
+export function computeEvidenceStats(
+  chunks: RetrievedChunk[],
+  threshold: number = RAG_CONFIG.similarityThreshold,
+): EvidenceStats {
   if (chunks.length === 0) {
-    return { score: 0, level: "low" };
+    return {
+      totalChunks: 0,
+      uniqueSources: 0,
+      avgSimilarity: 0,
+      maxSimilarity: 0,
+      aboveThreshold: 0,
+      coverage: 0,
+      scoreGap: 0,
+    };
   }
 
-  // 1. 最高相似度
-  const maxSimilarity = chunks[0].similarity;
-
-  // 2. 相似度方差（衡量信息集中度）
   const similarities = chunks.map((c) => c.similarity);
+  const uniqueSourceIds = new Set(chunks.map((c) => c.sourceId));
+
+  return {
+    totalChunks: chunks.length,
+    uniqueSources: uniqueSourceIds.size,
+    avgSimilarity:
+      similarities.reduce((a, b) => a + b, 0) / similarities.length,
+    maxSimilarity: Math.max(...similarities),
+    aboveThreshold: chunks.filter((c) => c.similarity >= threshold).length,
+    coverage: uniqueSourceIds.size / Math.max(chunks.length, 1),
+    scoreGap: Math.max(...similarities) - Math.min(...similarities),
+  };
+}
+
+/**
+ * M1: 计算多维度置信度
+ * 基于相似度、来源多样性和证据覆盖综合评分
+ */
+export function calculateConfidence(
+  chunks: RetrievedChunk[],
+): ConfidenceResult {
+  if (chunks.length === 0) {
+    return {
+      score: 0,
+      level: "low",
+      components: { similarity: 0, diversity: 0, coverage: 0 },
+    };
+  }
+
+  const similarities = chunks.map((c) => c.similarity);
+  const maxSimilarity = similarities[0];
   const avgSimilarity =
     similarities.reduce((a, b) => a + b, 0) / similarities.length;
-  const variance =
-    similarities.reduce((sum, s) => sum + Math.pow(s - avgSimilarity, 2), 0) /
-    similarities.length;
 
-  // 3. 综合评分
-  // - 最高相似度越高，置信度越高
-  // - 方差越大，说明信息集中在少数 chunk 中，置信度较高
-  // - 方差越小，说明信息分散，置信度降低
+  // 分项 1: 相似度分数 (权重 0.5)
+  // 基于最高相似度 + 平均相似度的加权
+  const similarityScore = maxSimilarity * 0.6 + avgSimilarity * 0.4;
 
-  let score = maxSimilarity;
+  // 分项 2: 来源多样性分数 (权重 0.2)
+  const uniqueSources = new Set(chunks.map((c) => c.sourceId)).size;
+  // 多来源佐证更可靠：1 source=0.3, 2=0.6, 3+=1.0
+  const diversityScore = Math.min(uniqueSources / 3, 1.0);
 
-  // 根据方差调整：方差大时稍微加分，方差小时减分
-  if (variance > 0.05) {
-    score += 0.05; // 信息集中，稍微提升置信度
-  } else if (variance < 0.01) {
-    score -= 0.05; // 信息分散，降低置信度
-  }
+  // 分项 3: 证据覆盖分数 (权重 0.3)
+  // 基于高质量 chunk 数量（similarity > 0.5）
+  const highQualityCount = chunks.filter((c) => c.similarity > 0.5).length;
+  const coverageScore = Math.min(highQualityCount / 3, 1.0);
 
-  // 确保分数在 [0, 1] 范围内
-  score = Math.max(0, Math.min(1, score));
+  // 综合评分
+  const score = Math.max(
+    0,
+    Math.min(
+      1,
+      similarityScore * 0.5 + diversityScore * 0.2 + coverageScore * 0.3,
+    ),
+  );
 
-  // 判断置信度等级
+  // 判断等级
   let level: "low" | "medium" | "high";
   if (score >= 0.75) {
     level = "high";
-  } else if (score >= 0.6) {
+  } else if (score >= ragStrategyConfig.confidenceFallbackThreshold) {
     level = "medium";
   } else {
     level = "low";
   }
 
-  return { score, level };
+  return {
+    score,
+    level,
+    components: {
+      similarity: similarityScore,
+      diversity: diversityScore,
+      coverage: coverageScore,
+    },
+  };
+}
+
+/**
+ * M1: 确定检索决策
+ */
+export function determineRetrievalDecision(
+  chunks: RetrievedChunk[],
+  confidenceResult: ConfidenceResult,
+): RetrievalDecision {
+  if (chunks.length === 0 || confidenceResult.level === "low") {
+    return "no_evidence";
+  }
+  if (confidenceResult.level === "medium") {
+    return "uncertain";
+  }
+  return "grounded";
 }
 
 /**
@@ -463,8 +576,15 @@ export async function hybridRetrieveChunks(params: {
   }
 
   // 计算置信度
-  const { score: confidence, level: confidenceLevel } =
-    calculateConfidence(chunks);
+  const confidenceDetail = calculateConfidence(chunks);
+  const { score: confidence, level: confidenceLevel } = confidenceDetail;
+
+  // M1: 计算证据统计 & 检索决策
+  const evidenceStats = computeEvidenceStats(chunks);
+  const retrievalDecision = determineRetrievalDecision(
+    chunks,
+    confidenceDetail,
+  );
 
   return {
     chunks,
@@ -472,8 +592,11 @@ export async function hybridRetrieveChunks(params: {
     retrievalMs,
     embeddingMs,
     queryEmbedding,
-    retrievalType: "hybrid",
+    retrievalType: "hybrid" as const,
     confidence,
     confidenceLevel,
+    confidenceDetail,
+    retrievalDecision,
+    evidenceStats,
   };
 }
