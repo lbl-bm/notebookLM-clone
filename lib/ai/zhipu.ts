@@ -1,11 +1,12 @@
 /**
  * 智谱 AI API 封装
  * 包含 Embedding-3 和 GLM-4.7 的调用
- * 
+ *
  * 参考: PROJECT_SPEC.md 3.4 节
  */
 
 import { zhipuConfig, EMBEDDING_DIM } from '@/lib/config'
+import { getCachedEmbedding, setCachedEmbedding } from '@/lib/cache/embedding-cache'
 
 // ============================================
 // 类型定义
@@ -48,11 +49,21 @@ interface ChatResponse {
 
 /**
  * 获取文本的向量表示
- * 🔴 架构风险 8.1: 强制指定维度为 1024
+ * P1.3: 带内存缓存，相同查询复用结果
  */
 export async function getEmbedding(text: string): Promise<number[]> {
+  // 尝试从缓存取
+  const cached = await getCachedEmbedding(text)
+  if (cached) return cached
+
+  // 缓存未命中，调 API
   const embeddings = await getEmbeddings([text])
-  return embeddings[0]
+  const result = embeddings[0]
+
+  // 写入缓存（异步，不阻塞主流程）
+  setCachedEmbedding(text, result).catch(() => {/* 缓存写失败不影响功能 */})
+
+  return result
 }
 
 /**

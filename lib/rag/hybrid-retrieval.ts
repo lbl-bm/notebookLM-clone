@@ -198,10 +198,10 @@ async function sparseSearch(
         dc.chunk_index,
         dc.content,
         dc.metadata,
-        ts_rank(dc.content_tsv, plainto_tsquery('english', ${cleanQuery})) as ts_rank
+        ts_rank(dc.content_tsv, plainto_tsquery('simple', ${cleanQuery})) as ts_rank
       FROM document_chunks dc
       WHERE dc.notebook_id = ${notebookId}::uuid
-        AND dc.content_tsv @@ plainto_tsquery('english', ${cleanQuery})
+        AND dc.content_tsv @@ plainto_tsquery('simple', ${cleanQuery})
       ORDER BY ts_rank DESC
       LIMIT ${topK}
     `;
