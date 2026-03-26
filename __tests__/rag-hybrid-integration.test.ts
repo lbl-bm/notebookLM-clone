@@ -245,12 +245,16 @@ describe("P1.1a 集成测试：混合检索集成", () => {
     });
 
     it("应该处理极端情况", async () => {
-      // 极长的查询
-      const longQuery = "a ".repeat(1000);
-      const result1 = await hybridSearch(testNotebookId, longQuery, testQueryEmbedding, {
-        topK: 10,
-      });
-      expect(result1.results).toBeDefined();
+      // 超过长度限制应该抛出错误
+      await expect(
+        hybridSearch(testNotebookId, "a ".repeat(1001), testQueryEmbedding, { topK: 10 })
+      ).rejects.toThrow("exceeds maximum length");
+
+      // 刚好在边界内（2000 chars）应该正常执行
+      const boundaryQuery = "a ".repeat(1000); // 2000 chars = MAX_QUERY_LENGTH
+      await expect(
+        hybridSearch(testNotebookId, boundaryQuery, testQueryEmbedding, { topK: 10 })
+      ).resolves.toBeDefined();
 
       // 极大的 topK
       const result2 = await hybridSearch(testNotebookId, "test", testQueryEmbedding, {

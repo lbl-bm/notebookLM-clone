@@ -46,10 +46,11 @@ export class FeatureFlagManager {
   private constructor() {}
 
   static getInstance(): FeatureFlagManager {
-    if (!FeatureFlagManager.instance) {
-      FeatureFlagManager.instance = new FeatureFlagManager();
+    const g = globalThis as unknown as { __featureFlagManager?: FeatureFlagManager };
+    if (!g.__featureFlagManager) {
+      g.__featureFlagManager = new FeatureFlagManager();
     }
-    return FeatureFlagManager.instance;
+    return g.__featureFlagManager;
   }
 
   /**
@@ -286,8 +287,12 @@ export class CanaryMetricsLogger {
       );
     } catch (error) {
       logger.error("Failed to flush canary metrics:", error);
-      // 重新加入缓冲区以供重试
-      this.metricsBuffer.unshift(...metricsToFlush);
+      // 重新加入缓冲区，但不超过上限，防止存储持续不可用时无限增长
+      if (this.metricsBuffer.length < this.BUFFER_SIZE) {
+        this.metricsBuffer.unshift(...metricsToFlush);
+      } else {
+        logger.warn(`Metrics buffer full, dropping ${metricsToFlush.length} metrics`);
+      }
     }
   }
 

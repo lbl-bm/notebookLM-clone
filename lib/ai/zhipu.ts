@@ -189,9 +189,10 @@ export async function withRetry<T>(
       lastError = error as Error
       
       // 检查是否是可重试的错误（429 或 5xx）
-      const isRetryable = 
-        lastError.message.includes('429') || 
-        lastError.message.includes('5')
+      // 用词边界正则精确匹配 5xx 状态码，避免误匹配含 "5" 的普通错误消息
+      const isRetryable =
+        lastError.message.includes('429') ||
+        /\b5\d{2}\b/.test(lastError.message)
       
       if (isRetryable && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt] || RETRY_DELAYS[RETRY_DELAYS.length - 1]

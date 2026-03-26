@@ -48,26 +48,20 @@ async function hashText(text: string): Promise<string> {
 }
 
 /**
- * LRU 淘汰：删除最久未使用的条目
+ * O(1) LRU 淘汰：利用 Map 的插入顺序特性
+ * Map 天然保证迭代顺序 = 插入顺序，第一个 key 就是最久未使用的
+ * （配合 getCachedEmbedding 里的"删除再重插"操作实现 O(1) LRU）
  */
 function evictLRU(): void {
-  let oldestKey = "";
-  let oldestTime = Infinity;
-
-  for (const [key, entry] of store.map) {
-    if (entry.lastUsed < oldestTime) {
-      oldestTime = entry.lastUsed;
-      oldestKey = key;
-    }
-  }
-
-  if (oldestKey) {
-    store.map.delete(oldestKey);
+  const firstKey = store.map.keys().next().value;
+  if (firstKey !== undefined) {
+    store.map.delete(firstKey);
   }
 }
 
 /**
  * 从缓存获取 embedding，未命中返回 null
+ * 命中时删除再重插，将条目移到 Map 末尾（= 标记为最近使用，实现 O(1) LRU）
  */
 export async function getCachedEmbedding(
   text: string
@@ -86,7 +80,11 @@ export async function getCachedEmbedding(
     return null;
   }
 
+  // 删除再重插 = 移到 Map 末尾 = 标记为最近使用
+  store.map.delete(key);
   entry.lastUsed = Date.now();
+  store.map.set(key, entry);
+
   store.hits++;
   return Array.from(entry.embedding);
 }

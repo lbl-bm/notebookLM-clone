@@ -266,18 +266,12 @@ function rrfFusion(
       const sparseRrfScore = 1 / (k + result.sparseRank);
 
       const existing = resultMap.get(result.id);
-      if (existing && existing.combinedScore !== undefined) {
-        // 两路都有：累加 RRF 分数，同时保留两个路由的原始分数
-        existing.combinedScore += sparseRrfScore;
+      if (existing) {
+        // 既在 Dense 又在 Sparse：累加 RRF 分数，补充 Sparse 原始分数
+        // （existing.combinedScore 在 Dense 处理时已必然赋值，else if 分支为死代码，已移除）
+        existing.combinedScore! += sparseRrfScore;
         existing.sparseScore = result.sparseScore;
         existing.sparseRank = result.sparseRank;
-        // vectorScore 已存在，无需修改
-      } else if (existing) {
-        // 只在 Dense 中：添加 Sparse 信息
-        existing.combinedScore = sparseRrfScore;
-        existing.sparseScore = result.sparseScore;
-        existing.sparseRank = result.sparseRank;
-        // vectorScore 和 denseRank 已存在，无需修改
       } else {
         // 只在 Sparse 中：新建条目
         resultMap.set(result.id, {
