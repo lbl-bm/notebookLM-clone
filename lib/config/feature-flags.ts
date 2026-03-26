@@ -54,6 +54,11 @@ export class FeatureFlagManager {
 
   /**
    * 检查用户是否应该启用某个特性
+   *
+   * 优先级 (从高到低):
+   * 1. 黑名单 - 如果在黑名单中直接拒绝
+   * 2. 白名单 - 如果在白名单中直接允许
+   * 3. 百分比灰度 - 根据一致性哈希进行灰度
    */
   async isEnabled(
     featureFlag: FeatureFlag,
@@ -67,23 +72,21 @@ export class FeatureFlagManager {
         return false;
       }
 
-      // 检查白名单
-      if (config.whitelistUsers && userId) {
-        return config.whitelistUsers.includes(userId);
+      // 优先级 1: 黑名单检查 - 如果在黑名单中，直接返回 false
+      if (userId && config.blacklistUsers?.includes(userId)) {
+        return false;
       }
 
-      if (config.whitelistNotebooks && notebookId) {
-        return config.whitelistNotebooks.includes(notebookId);
+      // 优先级 2: 白名单检查 - 如果在白名单中，直接返回 true
+      if (userId && config.whitelistUsers?.includes(userId)) {
+        return true;
       }
 
-      // 检查黑名单
-      if (config.blacklistUsers && userId) {
-        if (config.blacklistUsers.includes(userId)) {
-          return false;
-        }
+      if (notebookId && config.whitelistNotebooks?.includes(notebookId)) {
+        return true;
       }
 
-      // 基于百分比的灰度
+      // 优先级 3: 基于百分比的灰度
       return this.shouldEnableByPercentage(userId || notebookId || "", config.percentage);
     } catch (error) {
       logger.error(`Failed to check feature flag ${featureFlag}:`, error);
@@ -123,16 +126,13 @@ export class FeatureFlagManager {
    * 从数据库读取配置
    */
   private async fetchFromDatabase(featureFlag: FeatureFlag): Promise<CanaryConfig | null> {
-    // 这是一个占位符实现
-    // 在真实环境中，这应该查询数据库中的 feature_flags 表
-
+    // 简化配置：由于用户量少，直接全量发布，无需复杂灰度
     const defaultConfigs: Record<FeatureFlag, CanaryConfig> = {
       [FeatureFlag.HYBRID_RETRIEVAL]: {
-        enabled: true,
-        percentage: 10, // 初始 10% 灰度
-        rolloutStart: new Date("2026-03-29"),
-        rolloutEnd: new Date("2026-04-30"),
-        metadata: { version: "1.0", phase: "canary" },
+        enabled: true,      // ✅ 直接启用，无灰度
+        percentage: 100,    // 100% 用户
+        rolloutStart: new Date("2026-03-27"),
+        metadata: { version: "1.0", phase: "production" },
       },
       [FeatureFlag.CONFIDENCE_SCORING]: {
         enabled: false,
@@ -224,6 +224,9 @@ export interface CanaryMetrics {
 
 /**
  * 灰度指标记录器
+ *
+ * ✅ 在 Next.js 环境下使用 globalThis 以支持 HMR
+ * 防止热重载时重复创建实例
  */
 export class CanaryMetricsLogger {
   private static instance: CanaryMetricsLogger;
@@ -237,10 +240,13 @@ export class CanaryMetricsLogger {
   }
 
   static getInstance(): CanaryMetricsLogger {
-    if (!CanaryMetricsLogger.instance) {
-      CanaryMetricsLogger.instance = new CanaryMetricsLogger();
+    // ✅ 在 Next.js HMR 下也能复用同一实例
+    const globalForMetrics = globalThis as unknown as { canaryMetricsLogger?: CanaryMetricsLogger };
+
+    if (!globalForMetrics.canaryMetricsLogger) {
+      globalForMetrics.canaryMetricsLogger = new CanaryMetricsLogger();
     }
-    return CanaryMetricsLogger.instance;
+    return globalForMetrics.canaryMetricsLogger;
   }
 
   /**

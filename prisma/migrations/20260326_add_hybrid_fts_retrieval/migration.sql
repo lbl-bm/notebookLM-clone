@@ -18,19 +18,17 @@ ADD COLUMN IF NOT EXISTS content_tsv tsvector GENERATED ALWAYS AS (
 -- Step 2: 创建 GIN 索引加速全文检索
 -- ============================================
 
--- 注意: 如果索引已存在，此语句会被忽略
+-- ✅ GIN 索引用于 content_tsv
+-- 注：tsvector_ops 是 GIN 对 tsvector 的默认操作符类，无需显式指定
 CREATE INDEX IF NOT EXISTS idx_content_tsv_gin
 ON document_chunks USING gin (content_tsv);
-
--- 可选: 创建 tsvector @@ 操作符的索引
-CREATE INDEX IF NOT EXISTS idx_content_fts_query
-ON document_chunks USING gin (content_tsv tsvector_ops);
 
 -- ============================================
 -- Step 3: 创建混合检索 RPC 函数
 -- ============================================
 
 -- 完整的混合检索函数: Dense + Sparse + RRF 融合
+-- ✅ 使用 CTE 而不是临时表，完全避免并发冲突问题
 CREATE OR REPLACE FUNCTION public.hybrid_search(
   p_notebook_id uuid,
   p_query_embedding vector(1024) DEFAULT NULL,
@@ -53,38 +51,10 @@ RETURNS TABLE (
   dense_rank int,
   sparse_rank int
 )
-LANGUAGE plpgsql STABLE
+LANGUAGE sql STABLE
 AS $$
-DECLARE
-  v_dense_results RECORD;
-  v_sparse_results RECORD;
-BEGIN
-  -- 创建临时表用于存储两路检索结果
-  CREATE TEMP TABLE dense_results (
-    id bigint,
-    source_id uuid,
-    chunk_index int,
-    content text,
-    metadata jsonb,
-    vector_score float,
-    rank int
-  ) ON COMMIT DROP;
-
-  CREATE TEMP TABLE sparse_results (
-    id bigint,
-    source_id uuid,
-    chunk_index int,
-    content text,
-    metadata jsonb,
-    sparse_score float,
-    rank int
-  ) ON COMMIT DROP;
-
-  -- ============================================
-  -- Dense 检索: 如果提供了 embedding
-  -- ============================================
-  IF p_query_embedding IS NOT NULL THEN
-    INSERT INTO dense_results
+  WITH dense_results AS (
+    -- Dense 检索: 向量相似度
     SELECT
       dc.id,
       dc.source_id,
@@ -95,16 +65,13 @@ BEGIN
       ROW_NUMBER() OVER (ORDER BY dc.embedding <=> p_query_embedding) as rank
     FROM document_chunks dc
     WHERE dc.notebook_id = p_notebook_id
+      AND p_query_embedding IS NOT NULL
       AND (1 - (dc.embedding <=> p_query_embedding)) >= p_threshold
     ORDER BY dc.embedding <=> p_query_embedding
-    LIMIT p_dense_topk;
-  END IF;
-
-  -- ============================================
-  -- Sparse 检索: 如果提供了查询文本
-  -- ============================================
-  IF p_query_text IS NOT NULL AND p_query_text != '' THEN
-    INSERT INTO sparse_results
+    LIMIT p_dense_topk
+  ),
+  sparse_results AS (
+    -- Sparse 检索: 全文搜索
     SELECT
       dc.id,
       dc.source_id,
@@ -117,16 +84,13 @@ BEGIN
       ) as rank
     FROM document_chunks dc
     WHERE dc.notebook_id = p_notebook_id
+      AND p_query_text IS NOT NULL
+      AND p_query_text != ''
       AND dc.content_tsv @@ plainto_tsquery('english', p_query_text)
     ORDER BY ts_rank(dc.content_tsv, plainto_tsquery('english', p_query_text)) DESC
-    LIMIT p_sparse_topk;
-  END IF;
-
-  -- ============================================
-  -- RRF 融合: 合并两路检索结果
-  -- ============================================
-  RETURN QUERY
-  WITH rrf_scores AS (
+    LIMIT p_sparse_topk
+  ),
+  rrf_scores AS (
     -- Dense 路由的 RRF 分数
     SELECT
       d.id,
@@ -143,7 +107,7 @@ BEGIN
 
     UNION ALL
 
-    -- Sparse 路由的 RRF 分数
+    -- Sparse 路由的 RRF 分数 (避免与 Dense 重复)
     SELECT
       s.id,
       s.source_id,
@@ -156,7 +120,7 @@ BEGIN
       s.rank as sparse_rank,
       1.0 / (p_k + s.rank) as rrf_score
     FROM sparse_results s
-    WHERE NOT EXISTS (SELECT 1 FROM dense_results d WHERE d.id = s.id)  -- 避免重复
+    WHERE NOT EXISTS (SELECT 1 FROM dense_results d WHERE d.id = s.id)
   ),
   deduped AS (
     -- 按 id 聚合，处理既在 Dense 又在 Sparse 的结果
@@ -188,7 +152,6 @@ BEGIN
   FROM deduped d
   ORDER BY d.combined_score DESC
   LIMIT p_final_topk;
-END;
 $$;
 
 -- ============================================

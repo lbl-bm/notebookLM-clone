@@ -174,8 +174,9 @@ async function sparseSearch(
   const startTime = Date.now();
 
   try {
-    // 清理查询文本
-    const cleanQuery = queryText.trim().toLowerCase();
+    // 清理查询文本，删除前后空格
+    // 注：plainto_tsquery 内部会自动做 stemming 和大小写标准化
+    const cleanQuery = queryText.trim();
     if (!cleanQuery) {
       return { results: [], latency: Date.now() - startTime };
     }
@@ -402,32 +403,47 @@ export async function hybridSearch(
       method: "hybrid",
     };
   } catch (error) {
-    logger.error("Hybrid search error:", error);
+    logger.warn("Hybrid search failed, attempting to fall back to dense only", {
+      notebookId,
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     // 降级到 Dense Only
     if (queryEmbedding && enableDense) {
-      const denseResult = await denseSearch(
-        notebookId,
-        queryEmbedding,
-        topK,
-        densityThreshold
-      );
-      return {
-        results: denseResult.results,
-        diagnostics: {
-          queryText,
-          denseCount: denseResult.results.length,
-          denseLatency: denseResult.latency,
-          sparseCount: 0,
-          sparseLatency: 0,
-          beforeDedup: denseResult.results.length,
-          afterDedup: denseResult.results.length,
-          finalCount: denseResult.results.length,
-          totalLatency: denseResult.latency,
-          avgScore: 0,
-        },
-        method: "dense_only",
-      };
+      try {
+        const denseResult = await denseSearch(
+          notebookId,
+          queryEmbedding,
+          topK,
+          densityThreshold
+        );
+
+        // 只有当 Dense 有结果时才标记为 "dense_only"
+        // 否则标记为 "error"
+        const fallbackMethod = denseResult.results.length > 0 ? "dense_only" : "error";
+
+        return {
+          results: denseResult.results,
+          diagnostics: {
+            queryText,
+            denseCount: denseResult.results.length,
+            denseLatency: denseResult.latency,
+            sparseCount: 0,
+            sparseLatency: 0,
+            beforeDedup: denseResult.results.length,
+            afterDedup: denseResult.results.length,
+            finalCount: denseResult.results.length,
+            totalLatency: denseResult.latency,
+            avgScore: 0,
+          },
+          method: fallbackMethod,
+        };
+      } catch (denseError) {
+        logger.error("Dense fallback also failed", {
+          notebookId,
+          denseError: denseError instanceof Error ? denseError.message : String(denseError),
+        });
+      }
     }
 
     return {
