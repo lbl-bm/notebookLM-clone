@@ -187,21 +187,22 @@ export async function withRetry<T>(
       return await fn()
     } catch (error) {
       lastError = error as Error
-      
-      // 检查是否是可重试的错误（429 或 5xx）
+
       // 用词边界正则精确匹配 5xx 状态码，避免误匹配含 "5" 的普通错误消息
       const isRetryable =
         lastError.message.includes('429') ||
         /\b5\d{2}\b/.test(lastError.message)
-      
-      if (isRetryable && attempt < MAX_RETRIES - 1) {
-        const delay = RETRY_DELAYS[attempt] || RETRY_DELAYS[RETRY_DELAYS.length - 1]
-        await new Promise(resolve => setTimeout(resolve, delay))
-      } else {
+
+      const isLastAttempt = attempt >= MAX_RETRIES - 1
+      if (!isRetryable || isLastAttempt) {
         throw lastError
       }
+
+      const delay = RETRY_DELAYS[attempt] ?? RETRY_DELAYS[RETRY_DELAYS.length - 1]
+      await new Promise(resolve => setTimeout(resolve, delay))
     }
   }
 
+  // 理论上不可达（循环内所有路径要么 return 要么 throw），保留作为类型安全兜底
   throw lastError
 }

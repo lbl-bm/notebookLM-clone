@@ -175,13 +175,16 @@ async function sparseSearch(
 
   try {
     // 清理查询文本，删除前后空格
-    // 注：plainto_tsquery 内部会自动做 stemming 和大小写标准化
     const cleanQuery = queryText.trim();
     if (!cleanQuery) {
       return { results: [], latency: Date.now() - startTime };
     }
 
-    // 使用 plainto_tsquery 避免特殊字符问题
+    // 使用 plainto_tsquery('simple', ...) 与 content_tsv 列字典保持一致
+    // content_tsv 用 'simple' 生成（见 20260120120100 迁移），原因：
+    //   - 项目内容中英文混合，'english' 字典对中文完全无效
+    //   - 'simple' 做小写转换，中英文均可基本匹配，是权衡后的正确选择
+    //   - 代价：英文无 stemming（"running"/"run" 不等价），可接受
     const results = await prisma.$queryRaw<
       Array<{
         id: string;
