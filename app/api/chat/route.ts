@@ -71,6 +71,30 @@ export async function POST(request: Request) {
 
     const userQuestion = userMessage.content;
 
+    /**
+     * 多轮指代解析：当问题包含指代词时，将上一轮 AI 回答的内容附加到检索 query 里
+     * 解决 "那个方法怎么实现" / "继续" / "还有呢" 等指代模糊问题导致检索失效的问题
+     *
+     * 判断方式：轻量级关键词检测，无需额外 LLM 调用
+     * 改写方式：在原始 query 后追加上一轮 AI 回答的前 200 字作为语境锚点
+     */
+    const REFERENCE_PATTERNS = [
+      /^(那个|这个|上面|刚才|之前|前面|上述|上文|这里|它|他|她|其|该)/,
+      /^(继续|接着|然后|再说说|详细说|展开|补充)/,
+      /^(还有|另外还|还能|还可以)/,
+      /(怎么(实现|做|用)|如何(实现|做|用)|具体是|举例)/,
+    ];
+
+    const hasReference = REFERENCE_PATTERNS.some((p) => p.test(userQuestion));
+    const prevMessages = messages.slice(0, -1);
+    const lastAiMessage = [...prevMessages].reverse().find((m: { role: string; content: string }) => m.role === "assistant");
+
+    // 构造实际用于检索的 query：有指代且有上一轮 AI 回答时，附加语境
+    const retrievalQuery =
+      hasReference && lastAiMessage?.content
+        ? `${userQuestion}\n\n[对话上文参考] ${lastAiMessage.content.slice(0, 200)}`
+        : userQuestion;
+
     // 并行执行：保存用户消息 和 检索相关内容 (async-parallel)
     const saveUserMessagePromise = prisma.message.create({
       data: {
@@ -81,16 +105,17 @@ export async function POST(request: Request) {
     });
 
     // 1. 检索相关内容（使用混合检索）
+    // 检索时用 retrievalQuery（可能含指代上下文），生成回答时用原始 userQuestion
     const useHybridSearch = RAG_CONFIG.useHybridSearch;
     const retrievalPromise = useHybridSearch
       ? hybridRetrieveChunks({
           notebookId,
-          query: userQuestion,
+          query: retrievalQuery,
           sourceIds: selectedSourceIds,
         })
       : retrieveChunks({
           notebookId,
-          query: userQuestion,
+          query: retrievalQuery,
           sourceIds: selectedSourceIds,
         });
 
@@ -117,6 +142,9 @@ export async function POST(request: Request) {
         threshold: RAG_CONFIG.similarityThreshold,
         useHybridSearch,
         retrievalType: retrievalResult.retrievalType || "vector",
+        // 记录指代改写信息，便于调试
+        queryRewritten: hasReference && !!lastAiMessage?.content,
+        retrievalQuery: hasReference ? retrievalQuery : undefined,
       },
       model: modelConfig.model,
       chunks: retrievalResult.chunks.map((c) => ({

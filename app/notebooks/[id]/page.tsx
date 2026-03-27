@@ -85,7 +85,9 @@ async function fetchFullNotebook(id: string) {
       },
       messages: {
         orderBy: { createdAt: "asc" },
-        take: 50,
+        // 加载 20 条历史：buildMessages 按 token 预算选取，
+        // 过多历史消息加载到内存但实际只用少数几条是浪费，20 条已足够覆盖绝大多数对话场景
+        take: 20,
       },
       _count: {
         select: { sources: true, messages: true },

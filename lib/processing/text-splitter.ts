@@ -123,25 +123,26 @@ export class RecursiveTextSplitter {
     if (this.enableProtection) {
       protectedRegions = findSpecialContentBoundaries(text)
     }
-    
-    // 2. 如果启用自适应切分,先分析内容特征
+
+    // 2. 自适应切分：计算本次调用使用的 chunk size（局部变量，不修改实例状态）
+    //    原先直接写 this.chunkSize = ... 会导致并发调用时实例状态互相污染
     let contentAnalysis: ContentAnalysis | undefined
     let adaptiveConfig: AdaptiveChunkConfig | undefined
-    let originalChunkSize = this.chunkSize
-    let originalChunkOverlap = this.chunkOverlap
-    
+    let effectiveChunkSize = this.chunkSize
+    let effectiveChunkOverlap = this.chunkOverlap
+
     if (this.enableAdaptive) {
       contentAnalysis = analyzeContent(text)
       adaptiveConfig = getAdaptiveChunkConfig(contentAnalysis, CHUNK_CONFIG.chunkSize)
-      
-      // 临时应用自适应配置
-      this.chunkSize = adaptiveConfig.chunkSize
-      this.chunkOverlap = adaptiveConfig.chunkOverlap
+      effectiveChunkSize = adaptiveConfig.chunkSize
+      effectiveChunkOverlap = adaptiveConfig.chunkOverlap
     }
-    
+
     const chunks: Chunk[] = []
-    const splits = this.recursiveSplitWithProtection(text, this.separators, protectedRegions)
-    
+    const splits = this.recursiveSplitWithProtection(
+      text, this.separators, protectedRegions, 0, effectiveChunkSize
+    )
+
     let currentChunk = ''
     let currentStartChar = 0
     let chunkIndex = 0
@@ -150,10 +151,9 @@ export class RecursiveTextSplitter {
       const potentialChunk = currentChunk + split
       const tokenCount = countTokens(potentialChunk)
 
-      if (tokenCount <= this.chunkSize) {
+      if (tokenCount <= effectiveChunkSize) {
         currentChunk = potentialChunk
       } else {
-        // 当前 chunk 已满，保存并开始新 chunk
         if (currentChunk.trim()) {
           const chunk = this.createChunk(
             currentChunk.trim(),
@@ -171,7 +171,7 @@ export class RecursiveTextSplitter {
         }
 
         // 计算重叠部分
-        const overlapText = this.getOverlapText(currentChunk)
+        const overlapText = this.getOverlapText(currentChunk, effectiveChunkOverlap)
         currentStartChar = currentStartChar + currentChunk.length - overlapText.length
         currentChunk = overlapText + split
       }
@@ -193,34 +193,30 @@ export class RecursiveTextSplitter {
       chunks.push(chunk)
     }
 
-    // 恢复原始配置
-    if (this.enableAdaptive) {
-      this.chunkSize = originalChunkSize
-      this.chunkOverlap = originalChunkOverlap
-    }
-
     return chunks
   }
 
 
   /**
    * 递归切分文本（带保护区域检查）
+   * effectiveChunkSize 通过参数传入，避免读取可能被其他并发调用修改的实例状态
    */
   private recursiveSplitWithProtection(
     text: string,
     separators: string[],
     protectedRegions: ProtectedRegion[],
-    basePosition: number = 0
+    basePosition: number = 0,
+    effectiveChunkSize: number = this.chunkSize
   ): string[] {
     if (separators.length === 0) {
-      return this.splitByTokens(text)
+      return this.splitByTokens(text, effectiveChunkSize)
     }
 
     const separator = separators[0]
     const remainingSeparators = separators.slice(1)
 
     if (separator === '') {
-      return this.splitByTokens(text)
+      return this.splitByTokens(text, effectiveChunkSize)
     }
 
     const splits = text.split(separator)
@@ -230,66 +226,53 @@ export class RecursiveTextSplitter {
     for (let i = 0; i < splits.length; i++) {
       const split = splits[i]
       const splitEnd = currentPosition + split.length
-      
+
       // 检查切分点是否在保护区域内部
       const protectedRegion = isInProtectedRegion(splitEnd, protectedRegions)
-      
+
       if (protectedRegion && !protectedRegion.canSplit) {
-        // 在保护区域内部，将整个区域作为一个单元
         const regionRelativeStart = protectedRegion.startChar - basePosition
         const regionRelativeEnd = protectedRegion.endChar - basePosition
-        
+
         if (regionRelativeStart >= 0 && regionRelativeStart < text.length) {
-          // 将保护区域之前的内容正常处理
           if (regionRelativeStart > 0) {
             const beforeRegion = text.slice(0, regionRelativeStart)
             const beforeSplits = this.recursiveSplitWithProtection(
-              beforeRegion,
-              separators,
-              protectedRegions,
-              basePosition
+              beforeRegion, separators, protectedRegions, basePosition, effectiveChunkSize
             )
             result.push(...beforeSplits)
           }
-          
-          // 保护区域作为整体
+
           result.push(protectedRegion.content)
-          
-          // 处理保护区域之后的内容
+
           if (regionRelativeEnd < text.length) {
             const afterRegion = text.slice(regionRelativeEnd)
             const afterSplits = this.recursiveSplitWithProtection(
-              afterRegion,
-              separators,
-              protectedRegions,
-              basePosition + regionRelativeEnd
+              afterRegion, separators, protectedRegions,
+              basePosition + regionRelativeEnd, effectiveChunkSize
             )
             result.push(...afterSplits)
           }
-          
+
           return result
         }
       }
-      
-      // 正常切分逻辑
+
       const tokenCount = countTokens(split)
 
-      if (tokenCount <= this.chunkSize) {
+      if (tokenCount <= effectiveChunkSize) {
         const withSeparator = i < splits.length - 1 ? split + separator : split
         result.push(withSeparator)
       } else {
         const subSplits = this.recursiveSplitWithProtection(
-          split,
-          remainingSeparators,
-          protectedRegions,
-          currentPosition
+          split, remainingSeparators, protectedRegions, currentPosition, effectiveChunkSize
         )
         if (i < splits.length - 1 && subSplits.length > 0) {
           subSplits[subSplits.length - 1] += separator
         }
         result.push(...subSplits)
       }
-      
+
       currentPosition = splitEnd + separator.length
     }
 
@@ -339,11 +322,10 @@ export class RecursiveTextSplitter {
 
   /**
    * 按字符数量切分（最后手段）
-   * 使用 chunkSize * 2 作为字符数估算
    */
-  private splitByTokens(text: string): string[] {
+  private splitByTokens(text: string, effectiveChunkSize: number = this.chunkSize): string[] {
     const result: string[] = []
-    const charsPerChunk = this.chunkSize * 2 // 估算每个 chunk 的字符数
+    const charsPerChunk = effectiveChunkSize * 2 // 估算每个 chunk 的字符数
 
     for (let i = 0; i < text.length; i += charsPerChunk) {
       result.push(text.slice(i, i + charsPerChunk))
@@ -354,11 +336,10 @@ export class RecursiveTextSplitter {
 
   /**
    * 获取重叠文本
-   * 使用 chunkOverlap * 2 作为字符数估算
    */
-  private getOverlapText(text: string): string {
-    const overlapChars = this.chunkOverlap * 2 // 估算重叠字符数
-    
+  private getOverlapText(text: string, effectiveChunkOverlap: number = this.chunkOverlap): string {
+    const overlapChars = effectiveChunkOverlap * 2 // 估算重叠字符数
+
     if (text.length <= overlapChars) {
       return text
     }
