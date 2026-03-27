@@ -13,6 +13,7 @@ import {
 } from "./prompts";
 import {
   getSourceContentSmart,
+  getSourceContentBySemantic,
   getSourceContentsForMapReduce,
   truncateContextSmart,
   estimateTokens,
@@ -119,7 +120,10 @@ async function callLLM(
 }
 
 /**
- * 快速模式生成 - 智能采样
+ * 快速模式生成 - 内容采样
+ *
+ * summary / outline：目标是"覆盖全面" → 智能采样（开头 + 结尾 chunks）
+ * quiz / mindmap   ：目标是"抓住知识点" → 语义采样（向量检索高密度 chunks）
  */
 async function generateFast(
   notebookId: string,
@@ -128,11 +132,13 @@ async function generateFast(
 ): Promise<GenerateResult> {
   const startTime = Date.now();
 
-  // 获取采样内容
-  const { content: context, stats } = await getSourceContentSmart(
-    notebookId,
-    sourceIds
-  );
+  // 按任务类型选择采样策略
+  const useSemanticSampling = type === "quiz" || type === "mindmap";
+  const { content: context, stats } = useSemanticSampling
+    ? await getSourceContentBySemantic(notebookId, sourceIds)
+    : await getSourceContentSmart(notebookId, sourceIds);
+
+  const strategy = useSemanticSampling ? "semantic_sampling" : "smart_sampling";
 
   // 获取 prompt 并替换上下文
   const prompt = getPrompt(type).replace("{context}", context);
@@ -165,7 +171,7 @@ async function generateFast(
     stats: {
       ...stats,
       mode: "fast",
-      strategy: "smart_sampling",
+      strategy,
       duration: Date.now() - startTime,
     },
     parseSuccess,

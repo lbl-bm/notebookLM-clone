@@ -5,12 +5,13 @@
 
 export { generateArtifact, generateFromTemplate, type StudioMode, type GenerateResult } from './generator'
 export { getPrompt, type ArtifactType } from './prompts'
-export { 
-  getSourceContentSmart, 
+export {
+  getSourceContentSmart,
+  getSourceContentBySemantic,
   getSourceContentsForMapReduce,
   getChunksStats,
   estimateTokens,
-  type ContentStats 
+  type ContentStats
 } from './content'
 export { 
   parseQuiz, 

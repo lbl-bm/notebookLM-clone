@@ -5,6 +5,8 @@
 
 import { prisma } from '@/lib/db/prisma'
 import { Prisma } from '@prisma/client'
+import { vectorStore } from '@/lib/db/vector-store'
+import { getEmbedding } from '@/lib/ai/zhipu'
 
 // 配置常量
 const CHUNKS_PER_SOURCE_HEAD = 3
@@ -246,12 +248,141 @@ export async function getChunksStats(
   const sourceIdList = sources.map(s => s.id)
   
   const countResult = await prisma.$queryRaw<[{ count: bigint }]>`
-    SELECT COUNT(*) as count FROM document_chunks 
+    SELECT COUNT(*) as count FROM document_chunks
     WHERE source_id = ANY(${sourceIdList}::uuid[])
   `
 
   return {
     totalChunks: Number(countResult[0].count),
     sourceCount: sources.length,
+  }
+}
+
+/**
+ * 种子问题 → 语义采样策略
+ *
+ * quiz/mindmap 的目标是"抓重点知识"，而不是"覆盖全文"。
+ * 用几个角度不同的种子问题做向量检索，召回知识密度高的 chunk，
+ * 比盲目取开头结尾质量更高。
+ *
+ * 种子问题设计原则：
+ * - 覆盖典型的知识考查角度（定义、原理、对比、应用）
+ * - 故意宽泛，不指向具体领域，让语义相似度自然过滤出重要内容
+ */
+const SEMANTIC_SEED_QUERIES = [
+  '核心概念和定义是什么',
+  '主要原理和工作机制',
+  '关键步骤和方法',
+  '重要结论和应用场景',
+]
+
+const MAX_CHUNKS_PER_SEED = 5      // 每个种子召回的 chunk 数
+const MAX_TOTAL_SEMANTIC_CHUNKS = 30 // 去重后最多保留的 chunk 数
+
+/**
+ * 语义采样 - 用于 quiz / mindmap 等"抓重点"任务
+ *
+ * 流程：
+ * 1. 用多个种子问题并行做向量检索
+ * 2. 按 id 去重，保留相似度最高的版本
+ * 3. 按相似度降序取 top N，组装上下文
+ */
+export async function getSourceContentBySemantic(
+  notebookId: string,
+  sourceIds?: string[]
+): Promise<{ content: string; stats: ContentStats }> {
+  // 获取总 chunk 数（用于 stats）
+  const sources = await prisma.source.findMany({
+    where: {
+      notebookId,
+      status: 'ready',
+      ...(sourceIds?.length ? { id: { in: sourceIds } } : {}),
+    },
+    select: { id: true, title: true },
+  })
+
+  if (sources.length === 0) {
+    throw new Error('NO_SOURCES')
+  }
+
+  const sourceIdList = sources.map(s => s.id)
+
+  const countResult = await prisma.$queryRaw<[{ count: bigint }]>`
+    SELECT COUNT(*) as count FROM document_chunks
+    WHERE source_id = ANY(${sourceIdList}::uuid[])
+  `
+  const totalChunks = Number(countResult[0].count)
+
+  if (totalChunks === 0) {
+    throw new Error('EMPTY_CONTENT:资料中没有可识别的文本内容。')
+  }
+
+  // 并行对每个种子问题做 embedding + 检索
+  const seedResults = await Promise.allSettled(
+    SEMANTIC_SEED_QUERIES.map(async (seed) => {
+      const embedding = await getEmbedding(seed)
+      const chunks = await vectorStore.hybridSearch({
+        notebookId,
+        queryEmbedding: embedding,
+        queryText: seed,
+        topK: MAX_CHUNKS_PER_SEED,
+        threshold: 0.2, // 宽松阈值，避免内容稀疏时召回为空
+        ...(sourceIds?.length ? { sourceIds } : {}),
+      })
+      return chunks
+    })
+  )
+
+  // 收集所有召回结果，按 id 去重（保留相似度最高的版本）
+  const deduped = new Map<string, {
+    id: string
+    content: string
+    sourceId: string
+    similarity: number
+  }>()
+
+  for (const result of seedResults) {
+    if (result.status !== 'fulfilled') continue
+    for (const chunk of result.value) {
+      const existing = deduped.get(chunk.id)
+      if (!existing || chunk.similarity > existing.similarity) {
+        deduped.set(chunk.id, {
+          id: chunk.id,
+          content: chunk.content,
+          sourceId: chunk.sourceId,
+          similarity: chunk.similarity,
+        })
+      }
+    }
+  }
+
+  // 按相似度降序取 top N
+  const selected = Array.from(deduped.values())
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, MAX_TOTAL_SEMANTIC_CHUNKS)
+
+  // 如果语义召回失败（所有种子都报错），降级到智能采样
+  if (selected.length === 0) {
+    return getSourceContentSmart(notebookId, sourceIds)
+  }
+
+  // 构建 sourceId → title 映射
+  const sourceMap = new Map(sources.map(s => [s.id, s.title]))
+
+  const content = selected.map((chunk, i) => {
+    const title = sourceMap.get(chunk.sourceId) || '未知来源'
+    return `### 来源 ${i + 1}: ${title}\n${chunk.content}`
+  }).join('\n\n---\n\n')
+
+  const truncatedContent = truncateContextSmart(content)
+
+  return {
+    content: truncatedContent,
+    stats: {
+      totalChunks,
+      usedChunks: selected.length,
+      estimatedTokens: estimateTokens(truncatedContent),
+      sourceCount: sources.length,
+    },
   }
 }
