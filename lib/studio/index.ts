@@ -9,6 +9,7 @@ export {
   getSourceContentSmart,
   getSourceContentBySemantic,
   getSourceContentsForMapReduce,
+  getSourceContentsForMapReduceSemantic,
   getChunksStats,
   estimateTokens,
   type ContentStats

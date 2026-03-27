@@ -15,6 +15,7 @@ import {
   getSourceContentSmart,
   getSourceContentBySemantic,
   getSourceContentsForMapReduce,
+  getSourceContentsForMapReduceSemantic,
   truncateContextSmart,
   estimateTokens,
   type ContentStats,
@@ -368,6 +369,9 @@ ${results[i + 1]}`;
 
 /**
  * 精准模式生成 - Map-Reduce（并行优化版）
+ *
+ * summary / outline：顺序截取（全覆盖）
+ * quiz / mindmap   ：语义版内容获取（Map 阶段喂给 LLM 的内容更聚焦）
  */
 async function generatePrecise(
   notebookId: string,
@@ -377,11 +381,11 @@ async function generatePrecise(
 ): Promise<GenerateResult> {
   const startTime = Date.now();
 
-  // 获取每个 Source 的内容
-  const { sources, stats } = await getSourceContentsForMapReduce(
-    notebookId,
-    sourceIds
-  );
+  // 问题3：precise 模式按 type 选择内容获取策略（与 fast 模式保持一致）
+  const useSemanticSampling = type === "quiz" || type === "mindmap";
+  const { sources, stats } = useSemanticSampling
+    ? await getSourceContentsForMapReduceSemantic(notebookId, sourceIds)
+    : await getSourceContentsForMapReduce(notebookId, sourceIds);
 
   // Map 阶段：并行处理每个 Source
   const mapPromptTemplate = MAP_PROMPTS[type];

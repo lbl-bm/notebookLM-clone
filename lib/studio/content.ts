@@ -155,7 +155,139 @@ export async function getSourceContentSmart(
   }
 }
 
+// precise 模式每个 source 最多保留的语义 chunk 数
+const MAX_CHUNKS_PER_SOURCE_SEMANTIC = 12
+
 /**
+ * 精准模式的语义版内容获取 - 用于 quiz / mindmap
+ *
+ * 与原 getSourceContentsForMapReduce 的区别：
+ * - 原版：顺序截取前 20 个 chunk
+ * - 语义版：用种子问题在每个 source 内部做向量检索，取最相关的 chunk
+ *
+ * Map-Reduce 结构保持不变，只是每个 source 喂给 Map LLM 的内容质量更高。
+ * 降级：若某个 source 语义召回失败，该 source 回退到顺序截取（不影响其他 source）
+ */
+export async function getSourceContentsForMapReduceSemantic(
+  notebookId: string,
+  sourceIds?: string[]
+): Promise<{ sources: SourceContent[]; stats: ContentStats }> {
+  const sources = await prisma.source.findMany({
+    where: {
+      notebookId,
+      status: 'ready',
+      ...(sourceIds?.length ? { id: { in: sourceIds } } : {}),
+    },
+    select: { id: true, title: true },
+  })
+
+  if (sources.length === 0) {
+    throw new Error('NO_SOURCES')
+  }
+
+  // 批量获取种子 embedding（模块级缓存）
+  let seedEmbeddings: number[][]
+  try {
+    seedEmbeddings = await getSeedEmbeddings()
+  } catch {
+    // embedding 服务不可用，降级到原版
+    return getSourceContentsForMapReduce(notebookId, sourceIds)
+  }
+
+  const sourceContents: SourceContent[] = []
+  let totalChunks = 0
+  let usedChunks = 0
+
+  for (const source of sources) {
+    const countResult = await prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*) as count FROM document_chunks
+      WHERE source_id = ${source.id}::uuid
+    `
+    const sourceTotal = Number(countResult[0].count)
+    totalChunks += sourceTotal
+
+    let content: string
+    let chunkCount: number
+
+    try {
+      // 在当前 source 内并行检索所有种子
+      const seedResults = await Promise.allSettled(
+        SEMANTIC_SEED_QUERIES.map((seed, i) =>
+          vectorStore.hybridSearch({
+            notebookId,
+            queryEmbedding: seedEmbeddings[i],
+            queryText: seed,
+            topK: Math.ceil(MAX_CHUNKS_PER_SOURCE_SEMANTIC / SEMANTIC_SEED_QUERIES.length),
+            threshold: 0.2,
+            sourceIds: [source.id],
+          })
+        )
+      )
+
+      // 去重 + 质量过滤
+      const deduped = new Map<string, { content: string; similarity: number }>()
+      for (const r of seedResults) {
+        if (r.status !== 'fulfilled') continue
+        for (const chunk of r.value) {
+          const existing = deduped.get(chunk.id)
+          if (!existing || chunk.similarity > existing.similarity) {
+            deduped.set(chunk.id, { content: chunk.content, similarity: chunk.similarity })
+          }
+        }
+      }
+
+      const selected = Array.from(deduped.values())
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, MAX_CHUNKS_PER_SOURCE_SEMANTIC)
+
+      const avgSim = selected.length > 0
+        ? selected.reduce((s, c) => s + c.similarity, 0) / selected.length
+        : 0
+
+      if (selected.length > 0 && avgSim >= 0.25) {
+        content = selected.map(c => c.content).join('\n\n')
+        chunkCount = selected.length
+      } else {
+        throw new Error('quality_fallback')
+      }
+    } catch {
+      // 该 source 降级：顺序截取
+      const fallbackChunks = await prisma.$queryRaw<Array<{ content: string }>>`
+        SELECT content FROM document_chunks
+        WHERE source_id = ${source.id}::uuid
+        ORDER BY chunk_index ASC
+        LIMIT ${MAX_CHUNKS_PER_SOURCE_MAPREDUCE}
+      `
+      content = fallbackChunks.map(c => c.content).join('\n\n')
+      chunkCount = fallbackChunks.length
+    }
+
+    const truncated = truncateContextSmart(content, 3000)
+    usedChunks += chunkCount
+
+    sourceContents.push({
+      sourceId: source.id,
+      sourceTitle: source.title,
+      content: truncated,
+      chunkCount,
+    })
+  }
+
+  const totalTokens = sourceContents.reduce(
+    (sum, s) => sum + estimateTokens(s.content),
+    0
+  )
+
+  return {
+    sources: sourceContents,
+    stats: {
+      totalChunks,
+      usedChunks,
+      estimatedTokens: totalTokens,
+      sourceCount: sources.length,
+    },
+  }
+}/**
  * 获取每个 Source 的内容 - Map-Reduce 模式
  */
 export async function getSourceContentsForMapReduce(
@@ -276,22 +408,42 @@ const SEMANTIC_SEED_QUERIES = [
   '重要结论和应用场景',
 ]
 
-const MAX_CHUNKS_PER_SEED = 5      // 每个种子召回的 chunk 数
+const MAX_CHUNKS_PER_SEED = 5        // 每个种子召回的 chunk 数
 const MAX_TOTAL_SEMANTIC_CHUNKS = 30 // 去重后最多保留的 chunk 数
 
+// 问题1：种子 embedding 模块级缓存
+// 种子查询是固定字符串，每次 quiz/mindmap 生成重算是纯浪费；
+// 模块首次用到时初始化一次，后续所有调用复用
+// 用 globalThis 防止 Next.js HMR 重复初始化
+const g = globalThis as unknown as { __studioSeedEmbeddings?: Promise<number[][]> }
+
+function getSeedEmbeddings(): Promise<number[][]> {
+  if (!g.__studioSeedEmbeddings) {
+    // 批量请求一次，利用 zhipu getEmbeddings 的批量接口
+    const { getEmbeddings } = require('@/lib/ai/zhipu') as typeof import('@/lib/ai/zhipu')
+    g.__studioSeedEmbeddings = getEmbeddings(SEMANTIC_SEED_QUERIES).catch((err: unknown) => {
+      // 失败时清空缓存，下次可以重试
+      g.__studioSeedEmbeddings = undefined
+      throw err
+    })
+  }
+  return g.__studioSeedEmbeddings
+}
+
 /**
- * 语义采样 - 用于 quiz / mindmap 等"抓重点"任务
+ * 语义采样 - 用于 quiz / mindmap 等"抓重点"任务（fast 模式）
  *
  * 流程：
- * 1. 用多个种子问题并行做向量检索
- * 2. 按 id 去重，保留相似度最高的版本
- * 3. 按相似度降序取 top N，组装上下文
+ * 1. 批量获取种子 embedding（模块级缓存，只算一次）
+ * 2. 4 个种子并行做 hybridSearch（embedding 已就绪，只有 DB 查询并发）
+ * 3. 按 id 去重，保留相似度最高的版本
+ * 4. 质量门控：平均相似度 < 0.25 时降级到 getSourceContentSmart
+ * 5. 按相似度降序取 top N，组装上下文
  */
 export async function getSourceContentBySemantic(
   notebookId: string,
   sourceIds?: string[]
 ): Promise<{ content: string; stats: ContentStats }> {
-  // 获取总 chunk 数（用于 stats）
   const sources = await prisma.source.findMany({
     where: {
       notebookId,
@@ -317,23 +469,35 @@ export async function getSourceContentBySemantic(
     throw new Error('EMPTY_CONTENT:资料中没有可识别的文本内容。')
   }
 
-  // 并行对每个种子问题做 embedding + 检索
+  // 问题1：批量获取种子 embedding（模块级缓存，多次调用只算一次）
+  let seedEmbeddings: number[][]
+  try {
+    seedEmbeddings = await getSeedEmbeddings()
+  } catch {
+    // embedding 服务不可用，直接降级
+    return getSourceContentSmart(notebookId, sourceIds)
+  }
+
+  // 4 个种子并行检索（此时 embedding 已就绪，DB 并发数可控）
+  const searchParams = SEMANTIC_SEED_QUERIES.map((seed, i) => ({
+    seed,
+    embedding: seedEmbeddings[i],
+  }))
+
   const seedResults = await Promise.allSettled(
-    SEMANTIC_SEED_QUERIES.map(async (seed) => {
-      const embedding = await getEmbedding(seed)
-      const chunks = await vectorStore.hybridSearch({
+    searchParams.map(({ seed, embedding }) =>
+      vectorStore.hybridSearch({
         notebookId,
         queryEmbedding: embedding,
         queryText: seed,
         topK: MAX_CHUNKS_PER_SEED,
-        threshold: 0.2, // 宽松阈值，避免内容稀疏时召回为空
+        threshold: 0.2,
         ...(sourceIds?.length ? { sourceIds } : {}),
       })
-      return chunks
-    })
+    )
   )
 
-  // 收集所有召回结果，按 id 去重（保留相似度最高的版本）
+  // 按 id 去重，保留相似度最高的版本
   const deduped = new Map<string, {
     id: string
     content: string
@@ -356,17 +520,21 @@ export async function getSourceContentBySemantic(
     }
   }
 
-  // 按相似度降序取 top N
   const selected = Array.from(deduped.values())
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, MAX_TOTAL_SEMANTIC_CHUNKS)
 
-  // 如果语义召回失败（所有种子都报错），降级到智能采样
-  if (selected.length === 0) {
+  // 问题2：质量门控 + 降级
+  // 仅无结果 OR 平均相似度偏低时才降级，避免召回到大量噪声 chunk
+  const MIN_AVG_SIMILARITY = 0.25
+  const avgSimilarity = selected.length > 0
+    ? selected.reduce((s, c) => s + c.similarity, 0) / selected.length
+    : 0
+
+  if (selected.length === 0 || avgSimilarity < MIN_AVG_SIMILARITY) {
     return getSourceContentSmart(notebookId, sourceIds)
   }
 
-  // 构建 sourceId → title 映射
   const sourceMap = new Map(sources.map(s => [s.id, s.title]))
 
   const content = selected.map((chunk, i) => {
