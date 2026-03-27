@@ -655,16 +655,13 @@ export async function hybridRetrieveChunks(params: {
   const sourceMap = new Map(sources.map((s) => [s.id, s]));
 
   // ========== M2: 候选融合 ==========
+  // fusion 不再依赖扩展路由是否存在；单路由也执行去重 + 来源多样性约束，
+  // 原先 expansionChunks.length > 0 条件导致 fusion 模块在默认配置下从不执行
   let chunks: RetrievedChunk[];
 
-  if (
-    isM2 &&
-    ragStrategyConfig.fusionEnabled &&
-    expansionChunks.length > 0
-  ) {
+  if (isM2 && ragStrategyConfig.fusionEnabled) {
     const fusionStart = Date.now();
 
-    // 构建主路由候选
     const primaryCandidates: FusionCandidate[] = rawChunks.map((c) => ({
       id: c.id,
       sourceId: c.sourceId,
@@ -678,31 +675,33 @@ export async function hybridRetrieveChunks(params: {
       ftsScore: c.ftsScore,
     }));
 
-    // 构建扩展路由候选
-    const expansionCandidates: FusionCandidate[] = expansionChunks.map(
-      (c) => ({
-        id: c.id,
-        sourceId: c.sourceId,
-        chunkIndex: c.chunkIndex,
-        content: c.content,
-        metadata: c.metadata,
-        rawScore: c.combinedScore,
-        normalizedScore: 0,
-        route: "expansion" as const,
-        vectorScore: c.vectorScore,
-        ftsScore: c.ftsScore,
-      }),
-    );
+    const routes: Array<{ candidates: FusionCandidate[]; routeLabel: string }> =
+      [{ candidates: primaryCandidates, routeLabel: "primary" }];
 
-    const fusionResult = fuseCandidates([
-      { candidates: primaryCandidates, routeLabel: "primary" },
-      { candidates: expansionCandidates, routeLabel: "expansion" },
-    ]);
+    // 有扩展路由时加入
+    if (expansionChunks.length > 0) {
+      const expansionCandidates: FusionCandidate[] = expansionChunks.map(
+        (c) => ({
+          id: c.id,
+          sourceId: c.sourceId,
+          chunkIndex: c.chunkIndex,
+          content: c.content,
+          metadata: c.metadata,
+          rawScore: c.combinedScore,
+          normalizedScore: 0,
+          route: "expansion" as const,
+          vectorScore: c.vectorScore,
+          ftsScore: c.ftsScore,
+        }),
+      );
+      routes.push({ candidates: expansionCandidates, routeLabel: "expansion" });
+    }
+
+    const fusionResult = fuseCandidates(routes);
 
     m2Diagnostics.fusion = fusionResult.diagnostics;
     stageTiming.fusion = Date.now() - fusionStart;
 
-    // 融合后转为 RetrievedChunk
     chunks = fusionResult.candidates.map((c) => {
       const source = sourceMap.get(c.sourceId);
       return {

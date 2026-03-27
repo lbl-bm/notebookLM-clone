@@ -191,7 +191,8 @@ export async function processPdfSource(sourceId: string): Promise<void> {
         wordCount: parseResult.wordCount,
         pageCount: parseResult.pageCount,
         chunkCount: chunksWithEmbedding.length,
-        contentPreview: parseResult.text.slice(0, 200),
+        // 取第一个 chunk 的内容作为预览（跳过空行/页眉），比原文前 200 字更有代表性
+        contentPreview: chunksWithEmbedding[0]?.content.slice(0, 200) ?? parseResult.text.slice(0, 200),
       },
     })
 
@@ -230,12 +231,13 @@ export async function processUrlSource(sourceId: string): Promise<void> {
     // 检测 URL 类型
     const urlType = detectUrlType(source.url)
 
-    // 视频链接：直接标记为 ready
+    // YouTube / 视频链接：标记为 failed，给出明确提示
+    // 原先标记为 ready 但没有任何 chunks，用户看到资料"正常"但问答完全无效
     if (urlType === 'youtube') {
-      await updateSourceStatus(sourceId, 'ready', {
+      await updateSourceStatus(sourceId, 'failed', {
+        errorMessage: '暂不支持视频内容提取。请改为上传视频的文字稿或字幕文件。',
         meta: {
           ...(source.meta as object || {}),
-          warning: '暂不支持视频内容提取',
           urlType: 'youtube',
         },
       })
@@ -376,7 +378,7 @@ export async function processUrlSource(sourceId: string): Promise<void> {
           ...(source.meta as object || {}),
           wordCount,
           chunkCount: chunksWithEmbedding.length,
-          contentPreview: text.slice(0, 200),
+          contentPreview: chunksWithEmbedding[0]?.content.slice(0, 200) ?? text.slice(0, 200),
           fetchedAt: new Date().toISOString(),
         },
         updatedAt: new Date(),

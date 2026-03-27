@@ -10,15 +10,26 @@ import type { RerankDiagnostics } from "./types";
 
 /**
  * 计算单个 chunk 对关键词列表的覆盖率 (0-1)
+ *
+ * 对中文关键词：去除所有空格后做子串匹配（中文无单词边界，空格是噪声）
+ * 对英文关键词：toLowerCase 后做子串匹配（原有行为）
  */
 function keywordCoverage(content: string, keywords: string[]): number {
   if (keywords.length === 0) return 0;
 
+  // 预处理 content：保留一份去空格版用于中文匹配
   const lowerContent = content.toLowerCase();
+  const normalizedContent = lowerContent.replace(/\s+/g, "");
+
   let matched = 0;
 
   for (const keyword of keywords) {
-    if (lowerContent.includes(keyword.toLowerCase())) {
+    const lowerKw = keyword.toLowerCase();
+    // 中文关键词（含至少一个 CJK 字符）去空格后匹配，英文直接匹配
+    const isChinese = /[\u4e00-\u9fff]/.test(lowerKw);
+    const normalizedKw = isChinese ? lowerKw.replace(/\s+/g, "") : lowerKw;
+
+    if (isChinese ? normalizedContent.includes(normalizedKw) : lowerContent.includes(normalizedKw)) {
       matched++;
     }
   }

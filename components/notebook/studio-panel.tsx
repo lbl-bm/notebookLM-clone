@@ -101,11 +101,15 @@ export function StudioPanel({ notebookId, readySourceCount }: StudioPanelProps) 
       setArtifacts((prev) => [newArtifact, ...prev])
       setSelectedArtifact(newArtifact)
 
-      // 显示统计信息
+      // 显示统计信息（含采样覆盖率，让用户知道 fast 模式是否涵盖了所有资料）
       const stats = data.stats
+      const coverageNote =
+        stats.totalChunks > 0 && stats.usedChunks < stats.totalChunks
+          ? `，已采样 ${stats.usedChunks}/${stats.totalChunks} 段内容`
+          : ''
       toast({
         title: `${typeLabels[type]}生成成功！`,
-        description: `耗时 ${(stats.duration / 1000).toFixed(1)}s`,
+        description: `耗时 ${(stats.duration / 1000).toFixed(1)}s${coverageNote}`,
       })
     } catch (error) {
       clearInterval(interval)

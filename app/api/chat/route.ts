@@ -13,7 +13,6 @@ import { getModelConfig, ragStrategyConfig } from "@/lib/config";
 import {
   retrieveChunks,
   hybridRetrieveChunks,
-  deduplicateChunks,
   buildMessages,
   buildCitations,
   NO_EVIDENCE_RESPONSE,
@@ -124,8 +123,9 @@ export async function POST(request: Request) {
       retrievalPromise,
     ]);
 
-    // 去重
-    const chunks = deduplicateChunks(retrievalResult.chunks);
+    // fusion 内部已执行精确去重 + 近似去重 + 来源多样性约束
+    // retrieveChunks 路径结果直接使用，buildCitations 会再按内容去重
+    const chunks = retrievalResult.chunks;
     const citations = buildCitations(chunks);
 
     // M1: 提取检索决策和证据统计

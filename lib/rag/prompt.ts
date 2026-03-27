@@ -321,11 +321,10 @@ export function buildContext(chunks: RetrievedChunk[]): string {
         ? `${chunk.sourceTitle} (第 ${chunk.metadata.page} 页)`
         : chunk.sourceTitle;
 
-    // 使用 [1], [2] 等编号，方便 LLM 引用
+    // 不向 LLM 暴露相似度分数：避免模型根据分数调整语气和确定性，
+    // 而忽视实际内容质量（低相似度 chunk 可能包含关键答案）
     return `### [${index + 1}] ${sourceInfo}
-${chunk.content}
----
-相关度: ${Math.round(chunk.similarity * 100)}%`;
+${chunk.content}`;
   });
 
   return `## 参考资料
